@@ -219,6 +219,17 @@ D878UVCodeplug::ChannelElement::setFMAPRSFrequencyIndex(unsigned int idx) {
 
 
 bool
+D878UVCodeplug::ChannelElement::muteFMAPRS() const {
+  return getBit(Offset::muteFMAPRS());
+}
+
+void
+D878UVCodeplug::ChannelElement::enableMuteFMAPRS(bool enable) {
+  setBit(Offset::muteFMAPRS(), enable);
+}
+
+
+bool
 D878UVCodeplug::ChannelElement::sendTalkerAlias() const {
   return getBit(Offset::talkerAlias());
 }
@@ -339,6 +350,14 @@ D878UVCodeplug::ChannelElement::toChannelObj(Context &ctx) const {
       ext->setAPRSPTT(digitalAPRSPTTSetting());
     else
       ext->setAPRSPTT(AnytoneChannelExtension::APRSPTT::Off);
+    ext->enableSendTalkerAlias(sendTalkerAlias());
+    ext->enableAutoScan(autoScan());
+    ext->enableFMAPRSMute(muteFMAPRS());
+  }
+
+  if (FMChannel *fch = ch->as<FMChannel>()) {
+    if (AnytoneFMChannelExtension *fext = fch->anytoneChannelExtension())
+      fext->setPTTID((AnytoneFMChannelExtension::PTTId)pttIDSetting());
   }
 
   return ch;
@@ -454,11 +473,13 @@ D878UVCodeplug::ChannelElement::fromChannelObj(const Channel *c, Context &ctx) {
       setTXAPRSType(APRSType::FM);
     }
 
-    // Enable roaming
-    if (dc->roamingRef())
-      enableRoaming(true);
+    // Roaming: the channel takes part in roaming unless it has no roaming zone. The radio stores
+    // the inverse ("exclude channel from roaming").
+    enableRoaming(nullptr != dc->roaming());
 
     enableDataACK(dc->extended()->dataConfirm());
+    // SMS enable/forbid flag (the D868UV encoder is not called for this device)
+    enableSMS(dc->extended()->sms());
     /// Handles bug in AnyTone firmware.
     /// @todo Remove once fixed by AnyTone.
     enableRXAPRS(! dc->extended()->sms());
@@ -487,6 +508,13 @@ D878UVCodeplug::ChannelElement::fromChannelObj(const Channel *c, Context &ctx) {
         setDMREncryptionKeyIndex(ctx.index(cex->encryptionKey()));
       }
     }
+
+    // Apply DMR channel extension
+    if (AnytoneDMRChannelExtension *ext = dc->anytoneChannelExtension()) {
+      ch_ext = ext;
+      enableThroughMode(ext->throughMode());
+      enableRanging(ext->ranging());
+    }
   } else if (const FMChannel *ac = c->as<FMChannel>()) {
     // Set APRS system
     enableRXAPRS(false);
@@ -497,19 +525,14 @@ D878UVCodeplug::ChannelElement::fromChannelObj(const Channel *c, Context &ctx) {
         enableRXAPRS(true);
       }
     }
+    // The manufacturer CPS sets these DMR-only flags on every FM channel. The radio ignores them on
+    // FM channels, but setting them the same way keeps the codeplug identical to a CPS one.
+    enableSimplexTDMA(true);
+    enableThroughMode(true);
     // Apply extension settings
     if (AnytoneFMChannelExtension *ext = ac->anytoneChannelExtension()) {
       ch_ext = ext;
-      if (! ext->fmAPRSFrequency()->isNull()) {
-        int idx = ctx.index(ext->fmAPRSFrequency()->as<AnytoneAPRSFrequency>());
-        if ((0 <= idx) && (7 >= idx))
-          setFMAPRSFrequencyIndex(idx);
-        else
-          setFMAPRSFrequencyIndex(0);
-      } else {
-        // Use default
-        setFMAPRSFrequencyIndex(0);
-      }
+      setPTTIDSetting((PTTId)ext->pttID());
     }
   }
 
@@ -521,6 +544,21 @@ D878UVCodeplug::ChannelElement::fromChannelObj(const Channel *c, Context &ctx) {
       setDigitalAPRSPTTSetting(ch_ext->aprsPTT());
     else if (APRSType::FM == txAPRSType())
       setAnalogAPRSPTTSetting(ch_ext->aprsPTT());
+
+    if (! ch_ext->fmAPRSFrequency()->isNull()) {
+      int idx = ctx.index(ch_ext->fmAPRSFrequency()->as<AnytoneAPRSFrequency>());
+      if ((0 <= idx) && (7 >= idx))
+        setFMAPRSFrequencyIndex(idx);
+      else
+        setFMAPRSFrequencyIndex(0);
+    } else {
+      // Use default
+      setFMAPRSFrequencyIndex(0);
+    }
+
+    enableSendTalkerAlias(ch_ext->sendTalkerAlias());
+    enableAutoScan(ch_ext->autoScan());
+    enableMuteFMAPRS(ch_ext->fmAPRSMute());
   }
 
   return true;
@@ -586,7 +624,13 @@ D878UVCodeplug::ChannelExtensionElement::setTXColorCode(unsigned int cc) {
 
 bool
 D878UVCodeplug::ChannelExtensionElement::updateChannelObj(Channel *c, Context &ctx) const {
-  Q_UNUSED(c); Q_UNUSED(ctx);
+  Q_UNUSED(ctx);
+  if (FMChannel *fm = c->as<FMChannel>()) {
+    if (AnytoneFMChannelExtension *ext = fm->anytoneChannelExtension()) {
+      ext->setFiveToneBOT(bot5ToneIDIndex());
+      ext->setFiveToneEOT(eot5ToneIDIndex());
+    }
+  }
   return true;
 }
 
@@ -603,6 +647,11 @@ D878UVCodeplug::ChannelExtensionElement::fromChannelObj(const Channel *c, Contex
   if (c->is<DMRChannel>()) {
     auto dmr = c->as<DMRChannel>();
     setTXColorCode(dmr->colorCode());
+  } else if (const FMChannel *fm = c->as<FMChannel>()) {
+    if (AnytoneFMChannelExtension *ext = fm->anytoneChannelExtension()) {
+      setBOT5ToneIDIndex(ext->fiveToneBOT());
+      setEOT5ToneIDIndex(ext->fiveToneEOT());
+    }
   }
 
   return true;
@@ -708,10 +757,12 @@ D878UVCodeplug::RoamingChannelElement::toChannel(Context &ctx) {
   roam->setName(name());
   roam->setRXFrequency(Frequency::fromHz(rxFrequency()));
   roam->setTXFrequency(Frequency::fromHz(txFrequency()));
-  if (hasColorCode())
+  if (hasColorCode()) {
+    roam->overrideColorCode(true);
     roam->setColorCode(colorCode());
-  else
+  } else {
     roam->overrideColorCode(false);
+  }
   roam->overrideTimeSlot(true);
   roam->setTimeSlot(timeSlot());
 
@@ -1037,11 +1088,18 @@ D878UVCodeplug::GeneralSettingsElement::setGPSTimeZone(const QTimeZone &zone) {
 
 Interval
 D878UVCodeplug::GeneralSettingsElement::transmitTimeout() const {
+  // 0 means "off"
+  if (0 == getUInt8(Offset::transmitTimeout()))
+    return Interval::infinity();
   return Interval::fromSeconds((unsigned)getUInt8(Offset::transmitTimeout())*30);
 }
 void
 D878UVCodeplug::GeneralSettingsElement::setTransmitTimeout(const Interval &tot) {
-  setUInt8(Offset::transmitTimeout(), tot.seconds()/30);
+  // Infinite or null TOT is "off" (0)
+  if (! tot.isFinite())
+    setUInt8(Offset::transmitTimeout(), 0);
+  else
+    setUInt8(Offset::transmitTimeout(), std::min(255ULL, tot.seconds()/30));
 }
 
 AnytoneDisplaySettingsExtension::Language
@@ -1613,6 +1671,10 @@ D878UVCodeplug::GeneralSettingsElement::keyToneLevel() const {
 }
 void
 D878UVCodeplug::GeneralSettingsElement::setKeyToneLevel(Level level) {
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (keyToneLevel() == level)
+    return;
   setUInt8(Offset::keyToneLevel(), level.mapTo(Limit::keyTone()));
 }
 void
@@ -1952,9 +2014,11 @@ D878UVCodeplug::GeneralSettingsElement::rxBacklightDuration() const {
 
 void
 D878UVCodeplug::GeneralSettingsElement::setRXBacklightDuration(Interval intv) {
-  if (intv.isFinite() || intv > Interval::fromSeconds(30))
+  // 0 means "always on"
+  if ((! intv.isFinite()) || (intv > Interval::fromSeconds(255)))
     setUInt8(Offset::rxBacklightDuration(), 0);
-  setUInt8(Offset::rxBacklightDuration(), intv.seconds());
+  else
+    setUInt8(Offset::rxBacklightDuration(), intv.seconds());
 }
 
 
@@ -2059,7 +2123,10 @@ D878UVCodeplug::GeneralSettingsElement::fromConfig(const Flags &flags, Context &
   // Encode tone settings
   enableIdleChannelTone(
     ctx.config()->settings()->tone()->channelIdle().testFlag(Channel::Type::DMR));
-  setKeyToneLevel(ctx.config()->settings()->tone()->keyToneVolume());
+  // The key tone is switched on/off separately (see AnytoneCodeplug::GeneralSettingsElement),
+  // the level is only meaningful if the key tone is enabled. Otherwise keep the device setting.
+  if (ctx.config()->settings()->tone()->keyToneEnabled())
+    setKeyToneLevel(ctx.config()->settings()->tone()->keyToneVolume());
 
   enableGPSUnitsImperial(GNSSSettings::Units::Archaic == ctx.config()->settings()->gnss()->units());
 
@@ -2163,7 +2230,9 @@ D878UVCodeplug::GeneralSettingsElement::updateConfig(Context &ctx, const ErrorSt
   ctx.config()->settings()->boot()->enableReset(this->bootReset());
 
   // Decode tone settings
-  ctx.config()->settings()->tone()->setKeyToneVolume(keyToneLevel());
+  // Key tone volume is only valid if the key tone is enabled
+  ctx.config()->settings()->tone()->setKeyToneVolume(
+        keyToneEnabled() ? keyToneLevel() : Level::null());
   ctx.config()->settings()->tone()->setChannelIdle(
     idleChannelTone() ? Channel::Type::DMR : Channel::Type::None
   );
@@ -2669,6 +2738,10 @@ D878UVCodeplug::ExtendedSettingsElement::fmMicGain() const {
 }
 void
 D878UVCodeplug::ExtendedSettingsElement::setFMMicGain(Level gain) {
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (fmMicGain() == gain)
+    return;
   setUInt8(Offset::analogMicGain(), gain.mapTo(Limit::micGain()));
 }
 
@@ -2693,11 +2766,23 @@ D878UVCodeplug::ExtendedSettingsElement::callEndToneMelody(Melody &melody) const
 }
 void
 D878UVCodeplug::ExtendedSettingsElement::setCallEndToneMelody(const Melody &melody) {
+  // Keep the device encoding if it already decodes to the same melody.
+  {
+    Melody current;
+    callEndToneMelody(current);
+    if (current.toTones() == melody.toTones())
+      return;
+  }
   unsigned int n=std::min(5U, (unsigned int)melody.count());
   QVector<QPair<double, unsigned int>> tones = melody.toTones();
   for (unsigned int i=0; i<n; i++) {
     setUInt16_le(Offset::callEndTones()+2*i, tones.at(i).first);
     setUInt16_le(Offset::callEndDurations()+2*i, tones.at(i).second);
+  }
+  // Clear unused tone slots
+  for (unsigned int i=n; i<5; i++) {
+    setUInt16_le(Offset::callEndTones()+2*i, 0);
+    setUInt16_le(Offset::callEndDurations()+2*i, 0);
   }
 }
 
@@ -2713,11 +2798,23 @@ D878UVCodeplug::ExtendedSettingsElement::allCallToneMelody(Melody &melody) const
 }
 void
 D878UVCodeplug::ExtendedSettingsElement::setAllCallToneMelody(const Melody &melody) {
+  // Keep the device encoding if it already decodes to the same melody.
+  {
+    Melody current;
+    allCallToneMelody(current);
+    if (current.toTones() == melody.toTones())
+      return;
+  }
   unsigned int n=std::min(5U, (unsigned int)melody.count());
   QVector<QPair<double, unsigned int>> tones = melody.toTones();
   for (unsigned int i=0; i<n; i++) {
     setUInt16_le(Offset::allCallTones()+2*i, tones.at(i).first);
     setUInt16_le(Offset::allCallDurations()+2*i, tones.at(i).second);
+  }
+  // Clear unused tone slots
+  for (unsigned int i=n; i<5; i++) {
+    setUInt16_le(Offset::allCallTones()+2*i, 0);
+    setUInt16_le(Offset::allCallDurations()+2*i, 0);
   }
 }
 
@@ -2992,7 +3089,11 @@ D878UVCodeplug::APRSSettingsElement::manualTXInterval() const {
 }
 void
 D878UVCodeplug::APRSSettingsElement::setManualTXInterval(Interval sec) {
-  setUInt8(Offset::manualTXInterval(), sec.seconds());
+  // Infinite or null means off (0)
+  if (! sec.isFinite())
+    setUInt8(Offset::manualTXInterval(), 0);
+  else
+    setUInt8(Offset::manualTXInterval(), std::min(255ULL, sec.seconds()));
 }
 
 bool
@@ -3005,7 +3106,11 @@ D878UVCodeplug::APRSSettingsElement::autoTXInterval() const {
 }
 void
 D878UVCodeplug::APRSSettingsElement::setAutoTXInterval(Interval sec) {
-  setUInt8(Offset::autoTXInterval(), sec.seconds()/30);
+  // Infinite or null means off (0)
+  if (! sec.isFinite())
+    setUInt8(Offset::autoTXInterval(), 0);
+  else
+    setUInt8(Offset::autoTXInterval(), std::min(255ULL, sec.seconds()/30));
 }
 void
 D878UVCodeplug::APRSSettingsElement::disableAutoTX() {
@@ -3035,6 +3140,13 @@ D878UVCodeplug::APRSSettingsElement::fixedLocation() const {
 }
 void
 D878UVCodeplug::APRSSettingsElement::setFixedLocation(const QGeoCoordinate &loc) {
+  // The location is stored as a Maidenhead locator in the config. Keep the device encoding if it
+  // already lies within the same locator square and has the same height.
+  QGeoCoordinate current = fixedLocation();
+  if (current.isValid() && (deg2loc(current, 8) == deg2loc(loc, 8)) &&
+      ((QGeoCoordinate::Coordinate3D != loc.type()) ||
+       (getUInt16_le(Offset::fixedHeight()) == (unsigned int)(loc.altitude()*3.281))))
+    return;
   double latitude = loc.latitude();
   bool south = (0 > latitude); latitude = std::abs(latitude);
   unsigned lat_deg = int(latitude); latitude -= lat_deg; latitude *= 60;
@@ -3401,7 +3513,9 @@ D878UVCodeplug::APRSSettingsElement::fromFMAPRSSystem(
     const FMAPRSSystem *sys, Context &ctx, const ErrorStack &err)
 {
   Q_UNUSED(ctx)
-  clear();
+  // Do not clear the element here: When updating a codeplug, the element holds the settings read
+  // from the device and settings not represented by the config must be kept. The element gets
+  // cleared by the caller, if the codeplug is generated from scratch.
   if (! sys->hasRevertChannel()) {
     errMsg(err) << "Cannot encode APRS settings: "
                 << "No revert channel defined for APRS system '" << sys->name() <<"'.";
@@ -3413,7 +3527,8 @@ D878UVCodeplug::APRSSettingsElement::fromFMAPRSSystem(
   setFMChannelWidth(FMChannel::Bandwidth::Wide == sys->revertChannel()->bandwidth() ?
                       AnytoneFMAPRSSettingsExtension::Bandwidth::Wide :
                       AnytoneFMAPRSSettingsExtension::Bandwidth::Narrow);
-  setManualTXInterval(sys->period());
+  // The manual TX interval is not represented in the config. It is set by the caller only, if
+  // the codeplug is generated from scratch.
   setAutoTXInterval(sys->period());
   setDestination(sys->destination(), sys->destSSID());
   setSource(sys->source(), sys->srcSSID());
@@ -3439,7 +3554,9 @@ D878UVCodeplug::APRSSettingsElement::fromFMAPRSSystem(
   enableReportStatus(ext->reportStatus());
   enableReportOther(ext->reportOther());
 
-  // Encode additional FM APRS frequencies
+  // Encode additional FM APRS frequencies (clear unused ones first)
+  for (unsigned int i=1; i<Limit::fmFrequencies(); i++)
+    clearFMFrequency(i);
   for (int i=0; i<ext->frequencies()->count(); i++) {
     setFMFrequency(ctx.index(ext->frequencies()->get(i)),
                    ext->frequencies()->get(i)->as<AnytoneAPRSFrequency>()->frequency());
@@ -3523,6 +3640,9 @@ D878UVCodeplug::APRSSettingsElement::fromDMRAPRSSystemObj(unsigned int idx, DMRA
   if (sys->hasContact()) {
     setDMRDestination(idx, sys->contact()->number());
     setDMRCallType(idx, sys->contact()->type());
+  } else {
+    // No destination
+    setDMRDestination(idx, 0);
   }
   if (sys->hasRevertChannel()) {
     setDMRChannelIndex(idx, ctx.index(sys->revertChannel()));
@@ -3535,8 +3655,8 @@ D878UVCodeplug::APRSSettingsElement::fromDMRAPRSSystemObj(unsigned int idx, DMRA
 
 DMRAPRSSystem *
 D878UVCodeplug::APRSSettingsElement::toDMRAPRSSystemObj(int idx) const {
-  if (0 == dmrDestination(idx))
-    return nullptr;
+  // The caller decides whether a system without destination is decoded (e.g., if it is used by
+  // a channel).
   return new DMRAPRSSystem(tr("GPS Sys #%1").arg(idx+1));
 }
 
@@ -3547,6 +3667,10 @@ D878UVCodeplug::APRSSettingsElement::linkDMRAPRSSystem(int idx, DMRAPRSSystem *s
     sys->resetRevertChannel();
   else if (ctx.has<Channel>(dmrChannelIndex(idx)) && ctx.get<Channel>(dmrChannelIndex(idx))->is<DMRChannel>())
     sys->setRevertChannel(ctx.get<Channel>(dmrChannelIndex(idx))->as<DMRChannel>());
+
+  // A system without destination has no contact.
+  if (0 == dmrDestination(idx))
+    return true;
 
   // Search for a matching contact in contacts
   DMRContact *cont = nullptr;
@@ -4262,10 +4386,16 @@ D878UVCodeplug::encodeGPSSystems(const Flags &flags, Context &ctx, const ErrorSt
   // replaces D868UVCodeplug::encodeGPSSystems
 
   APRSSettingsElement aprs(data(Offset::aprsSettings()));
+  // If the codeplug is generated from scratch, start with the default settings. Otherwise keep
+  // the settings read from the device that are not represented by the config.
+  if (! flags.updateCodeplug())
+    aprs.clear();
 
   // Encode APRS system (there can only be one)
   if (0 < ctx.count<FMAPRSSystem>()) {
     aprs.fromFMAPRSSystem(ctx.get<FMAPRSSystem>(0), ctx, err);
+    if (! flags.updateCodeplug())
+      aprs.setManualTXInterval(ctx.get<FMAPRSSystem>(0)->period());
     AnalogAPRSMessageElement(data(Offset::analogAPRSMessage()))
         .setMessage(ctx.get<FMAPRSSystem>(0)->message());
   }
@@ -4282,9 +4412,30 @@ D878UVCodeplug::encodeGPSSystems(const Flags &flags, Context &ctx, const ErrorSt
     //  This setting might be overridden by any analog APRS system below
     APRSSettingsElement aprs(data(Offset::aprsSettings()));
     aprs.setAutoTXInterval(ctx.get<DMRAPRSSystem>(0)->period());
-    aprs.setManualTXInterval(ctx.get<DMRAPRSSystem>(0)->period());
+    if (! flags.updateCodeplug())
+      aprs.setManualTXInterval(ctx.get<DMRAPRSSystem>(0)->period());
   }
   return true;
+}
+
+bool
+D878UVCodeplug::dmrAPRSSystemUsedByChannel(unsigned int idx) {
+  ChannelBitmapElement channel_bitmap(data(Offset::channelBitmap()));
+  for (uint16_t i=0; i<Limit::numChannels(); i++) {
+    if (! channel_bitmap.isEncoded(i))
+      continue;
+    uint16_t bank = i/Limit::channelsPerBank(), n = i%Limit::channelsPerBank();
+    uint32_t addr = Offset::channelBanks() + bank*Offset::betweenChannelBanks()
+        + n*ChannelElement::size();
+    if (! isAllocated(addr, 0))
+      continue;
+    ChannelElement ch(data(addr));
+    if ((ChannelElement::Mode::Digital == ch.mode()) &&
+        (ChannelElement::APRSType::DMR == ch.txAPRSType()) &&
+        (idx == ch.digitalAPRSSystemIndex()))
+      return true;
+  }
+  return false;
 }
 
 bool
@@ -4314,9 +4465,10 @@ D878UVCodeplug::createGPSSystems(Context &ctx, const ErrorStack &err) {
     ctx.config()->posSystems()->add(sys); ctx.add(sys,0);
   }
 
-  // Create GPS systems
+  // Create GPS systems. Systems without destination are created only if a channel uses them, so
+  // that the APRS report setting of these channels is kept.
   for (unsigned int i=0; i<Limit::dmrAPRSSystems(); i++) {
-    if (0 == aprs.dmrDestination(i))
+    if ((0 == aprs.dmrDestination(i)) && (! dmrAPRSSystemUsedByChannel(i)))
       continue;
     if (DMRAPRSSystem *sys = aprs.toDMRAPRSSystemObj(i)) {
       logDebug() << "Create GPS sys '" << sys->name() << "' at idx " << i << ".";
@@ -4342,7 +4494,7 @@ D878UVCodeplug::linkGPSSystems(Context &ctx, const ErrorStack &err) {
 
   // Link GPS systems
   for (unsigned int i=0; i<Limit::dmrAPRSSystems(); i++) {
-    if (0 == aprs.dmrDestination(i))
+    if (! ctx.has<DMRAPRSSystem>(i))
       continue;
     aprs.linkDMRAPRSSystem(i, ctx.get<DMRAPRSSystem>(i), ctx);
   }

@@ -111,6 +111,11 @@ public:
     bool sendTalkerAlias() const override;
     void enableSendTalkerAlias(bool enable) override;
 
+    /** The D578UV has no FM APRS mute flag, always returns @c false. */
+    bool muteFMAPRS() const override;
+    /** The D578UV has no FM APRS mute flag, does nothing. */
+    void enableMuteFMAPRS(bool enable) override;
+
     AdvancedEncryptionType advancedEncryptionType() const override;
     void setEncryptionType(AdvancedEncryptionType type) override;
 

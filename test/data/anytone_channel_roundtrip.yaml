@@ -1,0 +1,68 @@
+radioIDs:
+  - dmr: {id: id1, name: DM3MAT, number: 2621370}
+
+contacts:
+  - dmr: {id: cont1, name: TG1, type: GroupCall, number: 1, ring: false}
+
+channels:
+  - dmr:
+      id: ch1
+      name: "DMR roaming"
+      rxFrequency: 439.1 MHz
+      txFrequency: 431.5 MHz
+      colorCode: 1
+      timeSlot: TS1
+      contact: cont1
+      roaming: !default
+      anytone:
+        throughMode: false
+        ranging: true
+        sendTalkerAlias: true
+        autoScan: true
+        frequencyCorrection: 20
+        additionalScanLists: [scan2]
+  - dmr:
+      id: ch2
+      name: "DMR no roaming"
+      rxFrequency: 439.2 MHz
+      txFrequency: 439.2 MHz
+      colorCode: 7
+      timeSlot: TS2
+      contact: cont1
+      extended:
+        sms: false
+        dataConfirm: false
+      anytone:
+        throughMode: true
+        sendTalkerAlias: false
+  - fm:
+      id: ch3
+      name: "FM"
+      rxFrequency: 145.5 MHz
+      txFrequency: 145.5 MHz
+      anytone:
+        ctcssPhaseReversal: true
+        pttID: Both
+        optionalSignaling: DTMF
+        dtmfID: 2
+        twoToneID: 1
+        fiveToneID: 3
+        twoToneDecode: 4
+        fiveToneBOT: 1
+        fiveToneEOT: 2
+        fmAPRSMute: true
+        sendTalkerAlias: true
+
+zones:
+  - id: zone1
+    name: "Test Zone"
+    A: [ch1, ch2, ch3]
+    B: []
+
+scanLists:
+  - id: scan1
+    name: "Scan 1"
+    channels: [ch1, ch2]
+  - id: scan2
+    name: "Scan 2"
+    channels: [ch1, ch3]

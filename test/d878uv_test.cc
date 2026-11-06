@@ -5,6 +5,13 @@
 #include "errorstack.hh"
 #include <QTest>
 #include "logger.hh"
+#include "anytone_extension.hh"
+#include "anytone_settingsextension.hh"
+#include "roamingchannel.hh"
+#include "roamingzone.hh"
+#include "gpssystem.hh"
+#include "smsextension.hh"
+#include "scanlist.hh"
 
 D878UVTest::D878UVTest(QObject *parent)
   : UnitTestBase(parent), _stderr(stderr)
@@ -650,6 +657,205 @@ D878UVTest::testCustomCTCSS() {
   QVERIFY(decoded.channelList()->channel(0)->is<FMChannel>());
   QCOMPARE(decoded.channelList()->channel(0)->as<FMChannel>()->rxTone(), SelectiveCall(206.6));
   QCOMPARE(decoded.channelList()->channel(0)->as<FMChannel>()->txTone(), SelectiveCall(206.6));
+}
+
+
+void
+D878UVTest::testChannelRoundTrip() {
+  ErrorStack err;
+  Config config;
+  if (! config.readYAML(":/data/anytone_channel_roundtrip.yaml", err))
+    QFAIL(QString("Cannot open codeplug file: %1").arg(err.format()).toStdString().c_str());
+
+  Config decoded;
+  encodeDecode(config, decoded);
+  QCOMPARE(decoded.channelList()->count(), 3);
+
+  // Channel 1: roaming, ranging, talker alias, auto scan, frequency correction
+  DMRChannel *ch1 = decoded.channelList()->channel(0)->as<DMRChannel>();
+  QVERIFY(ch1);
+  QVERIFY(nullptr != ch1->roaming());
+  QVERIFY(ch1->anytoneChannelExtension());
+  QCOMPARE(ch1->anytoneChannelExtension()->throughMode(), false);
+  QCOMPARE(ch1->anytoneChannelExtension()->ranging(), true);
+  QCOMPARE(ch1->anytoneChannelExtension()->sendTalkerAlias(), true);
+  QCOMPARE(ch1->anytoneChannelExtension()->autoScan(), true);
+  QCOMPARE(ch1->anytoneChannelExtension()->frequencyCorrection(), 20);
+
+  // Channel 2: excluded from roaming, through mode, SMS disabled, no data ACK
+  DMRChannel *ch2 = decoded.channelList()->channel(1)->as<DMRChannel>();
+  QVERIFY(ch2);
+  QVERIFY(nullptr == ch2->roaming());
+  QCOMPARE(ch2->anytoneChannelExtension()->throughMode(), true);
+  QCOMPARE(ch2->anytoneChannelExtension()->sendTalkerAlias(), false);
+  QCOMPARE(ch2->extended()->sms(), false);
+  QCOMPARE(ch2->extended()->dataConfirm(), false);
+
+  // Channel 3: FM signaling settings
+  FMChannel *ch3 = decoded.channelList()->channel(2)->as<FMChannel>();
+  QVERIFY(ch3);
+  AnytoneFMChannelExtension *ext = ch3->anytoneChannelExtension();
+  QVERIFY(ext);
+  QCOMPARE(ext->ctcssPhaseReversal(), true);
+  QCOMPARE(ext->pttID(), AnytoneFMChannelExtension::PTTId::Both);
+  QCOMPARE(ext->optionalSignaling(), AnytoneFMChannelExtension::OptionalSignaling::DTMF);
+  QCOMPARE(ext->dtmfID(), 2U);
+  QCOMPARE(ext->twoToneID(), 1U);
+  QCOMPARE(ext->fiveToneID(), 3U);
+  QCOMPARE(ext->twoToneDecode(), 4U);
+  QCOMPARE(ext->fiveToneBOT(), 1U);
+  QCOMPARE(ext->fiveToneEOT(), 2U);
+  QCOMPARE(ext->fmAPRSMute(), true);
+  QCOMPARE(ext->sendTalkerAlias(), true);
+}
+
+
+void
+D878UVTest::testSettingsOff() {
+  ErrorStack err;
+  Config config;
+  if (! config.readYAML(":/data/fm_aprs_test.yaml", err))
+    QFAIL(QString("Cannot open codeplug file: %1").arg(err.format()).toStdString().c_str());
+  config.settings()->disableTOT();
+  if (nullptr == config.settings()->anytoneExtension())
+    config.settings()->setAnytoneExtension(new AnytoneSettingsExtension());
+  config.settings()->anytoneExtension()->displaySettings()->setBacklightDurationRX(Interval::infinity());
+  config.posSystems()->get(0)->as<FMAPRSSystem>()->disablePeriod();
+
+  D878UVCodeplug codeplug;
+  Codeplug::Flags flags; flags.setUpdateCodeplug(false);
+  if (! codeplug.encode(&config, flags, err))
+    QFAIL(QString("Cannot encode codeplug: %1").arg(err.format()).toStdString().c_str());
+
+  // 0 means "off" on the device
+  QCOMPARE(*codeplug.data(0x02500004), (unsigned char)0x00); // TOT
+  QCOMPARE(*codeplug.data(0x025000e6), (unsigned char)0x00); // RX backlight duration
+  QCOMPARE(*codeplug.data(0x0250100b), (unsigned char)0x00); // APRS auto TX interval
+
+  Config decoded;
+  if (! codeplug.decode(&decoded, err))
+    QFAIL(QString("Cannot decode codeplug: %1").arg(err.format()).toStdString().c_str());
+  QVERIFY(decoded.settings()->totDisabled());
+  QVERIFY(decoded.settings()->anytoneExtension()->displaySettings()->backlightDurationRX().isInfinite());
+  QVERIFY(! decoded.posSystems()->get(0)->as<FMAPRSSystem>()->period().isFinite());
+}
+
+
+void
+D878UVTest::testUpdateKeepsDeviceSettings() {
+  ErrorStack err;
+  D878UVCodeplug codeplug;
+  Codeplug::Flags flags; flags.setUpdateCodeplug(false);
+  if (! codeplug.encode(&_basicConfig, flags, err))
+    QFAIL(QString("Cannot encode codeplug: %1").arg(err.format()).toStdString().c_str());
+
+  // Put device values into the codeplug that the common level scale cannot represent exactly.
+  *codeplug.data(0x02500009) = 0x03;  // squelch A
+  *codeplug.data(0x0250000a) = 0x03;  // squelch B
+  *codeplug.data(0x0250003b) = 0x08;  // max speaker volume [0,8]
+  *codeplug.data(0x02500000) = 0x00;  // key tone off
+  *codeplug.data(0x025000bb) = 0x0d;  // key tone level [0,15]
+  *codeplug.data(0x02501001) = 0x14;  // unknown APRS setting byte
+  *codeplug.data(0x0250100a) = 0x2d;  // APRS manual TX interval (not part of the config)
+  QByteArray settings((const char *)codeplug.data(0x02500000), 0xf0);
+  QByteArray aprs((const char *)codeplug.data(0x02501000), 0x100);
+
+  Config decoded;
+  if (! codeplug.decode(&decoded, err))
+    QFAIL(QString("Cannot decode codeplug: %1").arg(err.format()).toStdString().c_str());
+  QCOMPARE(decoded.settings()->tone()->keyToneEnabled(), false);
+
+  // Encode the decoded config again into the same codeplug, updating it (as during a write).
+  Codeplug::Flags update; update.setUpdateCodeplug(true);
+  if (! codeplug.encode(&decoded, update, err))
+    QFAIL(QString("Cannot encode codeplug: %1").arg(err.format()).toStdString().c_str());
+
+  for (int i=0; i<settings.size(); i++)
+    QVERIFY2(settings.at(i) == (char)codeplug.data(0x02500000)[i],
+             QString("General settings byte %1 changed").arg(i, 2, 16).toStdString().c_str());
+  for (int i=0; i<0x100; i++)
+    QVERIFY2(aprs.at(i) == (char)codeplug.data(0x02501000)[i],
+             QString("APRS settings byte %1 changed").arg(i, 2, 16).toStdString().c_str());
+}
+
+
+void
+D878UVTest::testMessageIndex() {
+  ErrorStack err;
+  Config config;
+  if (! config.readYAML(":/data/config_test.yaml", err))
+    QFAIL(QString("Cannot open codeplug file: %1").arg(err.format()).toStdString().c_str());
+  for (int i=0; i<3; i++) {
+    SMSTemplate *sms = new SMSTemplate();
+    sms->setName(QString("SMS %1").arg(i+1));
+    sms->setMessage(QString("Message %1").arg(i+1));
+    config.smsExtension()->smsTemplates()->add(sms);
+  }
+
+  D878UVCodeplug codeplug;
+  Codeplug::Flags flags; flags.setUpdateCodeplug(false);
+  if (! codeplug.encode(&config, flags, err))
+    QFAIL(QString("Cannot encode codeplug: %1").arg(err.format()).toStdString().c_str());
+
+  // Each entry holds the index of the next message (byte 2) and its own index (byte 3).
+  QCOMPARE(codeplug.data(0x01640000)[2], (unsigned char)0x01);
+  QCOMPARE(codeplug.data(0x01640000)[3], (unsigned char)0x00);
+  QCOMPARE(codeplug.data(0x01640010)[2], (unsigned char)0x02);
+  QCOMPARE(codeplug.data(0x01640010)[3], (unsigned char)0x01);
+  QCOMPARE(codeplug.data(0x01640020)[2], (unsigned char)0xff);
+  QCOMPARE(codeplug.data(0x01640020)[3], (unsigned char)0x02);
+
+  Config decoded;
+  if (! codeplug.decode(&decoded, err))
+    QFAIL(QString("Cannot decode codeplug: %1").arg(err.format()).toStdString().c_str());
+  QCOMPARE(decoded.smsExtension()->smsTemplates()->count(), 3);
+  QCOMPARE(decoded.smsExtension()->smsTemplates()->get(2)->as<SMSTemplate>()->message(),
+           QString("Message 3"));
+}
+
+
+void
+D878UVTest::testRoamingChannelColorCode() {
+  Config config; config.copy(_roamingConfig);
+  RoamingChannel *rch = config.roamingChannels()->get(0)->as<RoamingChannel>();
+  rch->overrideColorCode(true);
+  rch->setColorCode(0);
+
+  Config decoded;
+  encodeDecode(config, decoded);
+  RoamingChannel *drch = decoded.roamingChannels()->get(0)->as<RoamingChannel>();
+  QVERIFY(drch->colorCodeOverridden());
+  QCOMPARE(drch->colorCode(), 0U);
+}
+
+
+void
+D878UVTest::testDMRAPRSWithoutDestination() {
+  ErrorStack err;
+  Config config;
+  if (! config.readYAML(":/data/config_test.yaml", err))
+    QFAIL(QString("Cannot open codeplug file: %1").arg(err.format()).toStdString().c_str());
+  // Remove all existing positioning systems, add one without destination contact
+  while (config.posSystems()->count())
+    config.posSystems()->del(config.posSystems()->get(0));
+  DMRAPRSSystem *sys = new DMRAPRSSystem("GPS", nullptr, nullptr, Interval::fromMinutes(5));
+  config.posSystems()->add(sys);
+  DMRChannel *ch = nullptr;
+  for (int i=0; i<config.channelList()->count(); i++) {
+    if ((ch = config.channelList()->channel(i)->as<DMRChannel>()))
+      break;
+  }
+  QVERIFY(ch);
+  ch->setAPRS(sys);
+
+  Config decoded;
+  encodeDecode(config, decoded);
+  QCOMPARE(decoded.posSystems()->count(), 1);
+  QVERIFY(decoded.posSystems()->get(0)->is<DMRAPRSSystem>());
+  QVERIFY(! decoded.posSystems()->get(0)->as<DMRAPRSSystem>()->hasContact());
+  int idx = config.channelList()->indexOf(ch);
+  QCOMPARE(decoded.channelList()->channel(idx)->name(), ch->name());
+  QVERIFY(decoded.channelList()->channel(idx)->as<DMRChannel>()->aprs());
 }
 
 

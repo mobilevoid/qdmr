@@ -1,5 +1,7 @@
 #include "gpssystem.hh"
 #include "roamingchannel.hh"
+#include "roamingzone.hh"
+#include "scanlist.hh"
 #include "config.hh"
 #include "intermediaterepresentation.hh"
 #include "dmr6x2uv_codeplug.hh"
@@ -748,6 +750,10 @@ DMR6X2UVCodeplug::GeneralSettingsElement::keyToneLevel() const {
 }
 void
 DMR6X2UVCodeplug::GeneralSettingsElement::setKeyToneLevel(Level level) {
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (keyToneLevel() == level)
+    return;
   setUInt8(Offset::keyToneLevel(), level.mapTo(Limit::keyTone()));
 }
 void
@@ -995,9 +1001,11 @@ DMR6X2UVCodeplug::GeneralSettingsElement::rxBacklightDuration() const {
 
 void
 DMR6X2UVCodeplug::GeneralSettingsElement::setRXBacklightDuration(Interval dur) {
-  if (dur.isFinite() || dur > Interval::fromSeconds(30))
+  // 0 means "always on"
+  if ((! dur.isFinite()) || (dur > Interval::fromSeconds(255)))
     setUInt8(Offset::rxBacklightDuration(), 0);
-  setUInt8(Offset::rxBacklightDuration(), dur.seconds());
+  else
+    setUInt8(Offset::rxBacklightDuration(), dur.seconds());
 }
 
 
@@ -1040,8 +1048,10 @@ DMR6X2UVCodeplug::GeneralSettingsElement::fromConfig(const Flags &flags, Context
   setPreWaveDelay(ctx.config()->settings()->dmr()->preamble());
   setSMSFormat(ctx.config()->smsExtension()->format());
 
-  // Encode tone settings
-  setKeyToneLevel(ctx.config()->settings()->tone()->keyToneVolume());
+  // Encode tone settings. The key tone is switched on/off separately, the level is only meaningful
+  // if the key tone is enabled. Otherwise keep the device setting.
+  if (ctx.config()->settings()->tone()->keyToneEnabled())
+    setKeyToneLevel(ctx.config()->settings()->tone()->keyToneVolume());
 
   // apply DMR-6X2UV specific settings.
   AnytoneSettingsExtension *ext = ctx.config()->settings()->anytoneExtension();
@@ -1123,8 +1133,9 @@ DMR6X2UVCodeplug::GeneralSettingsElement::updateConfig(Context &ctx, const Error
   ctx.config()->settings()->dmr()->setPreamble(this->preWaveDelay());
   ctx.config()->smsExtension()->setFormat(this->smsFormat());
 
-  // Decode tone settings
-  ctx.config()->settings()->tone()->setKeyToneVolume(keyToneLevel());
+  // Decode tone settings, the key tone volume is only valid if the key tone is enabled
+  ctx.config()->settings()->tone()->setKeyToneVolume(
+        keyToneEnabled() ? keyToneLevel() : Level::null());
 
   // Get or add settings extension
   AnytoneSettingsExtension *ext = nullptr;
@@ -1676,6 +1687,26 @@ DMR6X2UVCodeplug::ChannelElement::enableRanging(bool enable) {
   return setBit(Offset::ranging(), enable);
 }
 
+bool
+DMR6X2UVCodeplug::ChannelElement::throughMode() const {
+  return getBit(Offset::throughMode());
+}
+void
+DMR6X2UVCodeplug::ChannelElement::enableThroughMode(bool enable) {
+  setBit(Offset::throughMode(), enable);
+}
+
+bool
+DMR6X2UVCodeplug::ChannelElement::dataACK() const {
+  // inverted
+  return ! getBit(Offset::dataACK());
+}
+void
+DMR6X2UVCodeplug::ChannelElement::enableDataACK(bool enable) {
+  // inverted
+  setBit(Offset::dataACK(), !enable);
+}
+
 unsigned int
 DMR6X2UVCodeplug::ChannelElement::dmrAPRSChannelIndex() const {
   return getUInt8(Offset::dmrAPRSChannelIndex());
@@ -1721,12 +1752,50 @@ DMR6X2UVCodeplug::ChannelElement::setAPRSType(APRSType aprstype) {
   setUInt2(Offset::aprsType(), (unsigned int)aprstype);
 }
 
+Channel *
+DMR6X2UVCodeplug::ChannelElement::toChannelObj(Context &ctx) const {
+  Channel *ch = AnytoneCodeplug::ChannelElement::toChannelObj(ctx);
+  if (nullptr == ch)
+    return nullptr;
+
+  if (DMRChannel *dch = ch->as<DMRChannel>()) {
+    dch->extended()->enableDataConfirm(dataACK());
+    if (AnytoneDMRChannelExtension *ext = dch->anytoneChannelExtension()) {
+      ext->enableThroughMode(throughMode());
+      ext->enableRanging(ranging());
+    }
+  }
+
+  return ch;
+}
+
 bool
 DMR6X2UVCodeplug::ChannelElement::fromChannelObj(const Channel *c, Context &ctx) {
   if (! AnytoneCodeplug::ChannelElement::fromChannelObj(c, ctx))
     return false;
 
+  // Scan list slots 1-7 (slot 0 is the channel's scan list). Unused slots are 0xff.
+  for (unsigned int n=1; n<Limit::scanListIndices(); n++)
+    clearScanListIndex(n);
+  AnytoneChannelExtension *cext = nullptr;
+  if (const FMChannel *fm = c->as<FMChannel>())
+    cext = fm->anytoneChannelExtension();
+  else if (const DMRChannel *dmr = c->as<DMRChannel>())
+    cext = dmr->anytoneChannelExtension();
+  if (cext) {
+    unsigned int n = 1;
+    for (int i=0; (i<cext->additionalScanLists()->count()) && (n<Limit::scanListIndices()); i++) {
+      int idx = ctx.index(cext->additionalScanLists()->get(i)->as<ScanList>());
+      if (0 > idx)
+        continue;
+      setScanListIndex(n++, idx);
+    }
+  }
+
   if (const FMChannel *fm = c->as<FMChannel>()) {
+    // The manufacturer CPS sets the (DMR only) simplex TDMA flag on every FM channel. The radio
+    // ignores it on FM channels, but setting it the same way keeps the codeplug identical.
+    enableSimplexTDMA(true);
     if (! fm->aprsRef()->isNull()) {
       setAPRSType(APRSType::FM);
       if (auto ext = fm->anytoneChannelExtension()) {
@@ -1738,6 +1807,15 @@ DMR6X2UVCodeplug::ChannelElement::fromChannelObj(const Channel *c, Context &ctx)
       }
     }
   } else if (const DMRChannel *dmr = c->as<DMRChannel>()) {
+    // Roaming: the channel takes part in roaming unless it has no roaming zone. The radio stores
+    // the inverse ("exclude channel from roaming").
+    enableRoaming(nullptr != dmr->roaming());
+    enableDataACK(dmr->extended()->dataConfirm());
+    if (AnytoneDMRChannelExtension *ext = dmr->anytoneChannelExtension()) {
+      enableThroughMode(ext->throughMode());
+      enableRanging(ext->ranging());
+    }
+
     if (! dmr->aprsRef()->isNull()) {
       if (dmr->aprsRef()->is<FMAPRSSystem>()) {
         setAPRSType(APRSType::FM);
@@ -1784,6 +1862,28 @@ bool
 DMR6X2UVCodeplug::ChannelElement::linkChannelObj(Channel *c, Context &ctx) const {
   if (! AnytoneCodeplug::ChannelElement::linkChannelObj(c, ctx))
     return false;
+  // Additional scan lists (slots 1-7)
+  AnytoneChannelExtension *cext = nullptr;
+  if (FMChannel *fm = c->as<FMChannel>()) {
+    if (nullptr == fm->anytoneChannelExtension())
+      fm->setAnytoneChannelExtension(new AnytoneFMChannelExtension());
+    cext = fm->anytoneChannelExtension();
+  } else if (DMRChannel *dmr = c->as<DMRChannel>()) {
+    if (nullptr == dmr->anytoneChannelExtension())
+      dmr->setAnytoneChannelExtension(new AnytoneDMRChannelExtension());
+    cext = dmr->anytoneChannelExtension();
+  }
+  if (cext) {
+    for (unsigned int n=1; n<Limit::scanListIndices(); n++) {
+      // Skip unset slots and the channel's own scan list (slot 0), a scan list cannot be assigned twice.
+      if ((! hasScanListIndex(n)) || (! ctx.has<ScanList>(scanListIndex(n))))
+        continue;
+      if (hasScanListIndex(0) && (scanListIndex(0) == scanListIndex(n)))
+        continue;
+      cext->additionalScanLists()->add(ctx.get<ScanList>(scanListIndex(n)));
+    }
+  }
+
   if (FMChannel *fm = c->as<FMChannel>()) {
     auto ext = fm->anytoneChannelExtension();
     if (nullptr == ext)
@@ -1800,6 +1900,9 @@ DMR6X2UVCodeplug::ChannelElement::linkChannelObj(Channel *c, Context &ctx) const
     auto ext = dmr->anytoneChannelExtension();
     if (nullptr == ext)
       dmr->setAnytoneChannelExtension(ext = new AnytoneDMRChannelExtension());
+    // If roaming is not disabled -> link to default roaming zone
+    if (roamingEnabled())
+      dmr->setRoaming(DefaultRoamingZone::get());
     if ((APRSType::FM == aprsType()) && ctx.count<FMAPRSSystem>()) {
       switch (fmAPRSPTTMode()) {
       case FMAPRSPTTMode::Off: ext->setAPRSPTT(AnytoneChannelExtension::APRSPTT::Off); break;
@@ -2009,7 +2112,11 @@ DMR6X2UVCodeplug::APRSSettingsElement::manualTXInterval() const {
 }
 void
 DMR6X2UVCodeplug::APRSSettingsElement::setManualTXInterval(Interval sec) {
-  setUInt8(Offset::manualTXInterval(), sec.seconds());
+  // Infinite or null means off (0)
+  if (! sec.isFinite())
+    setUInt8(Offset::manualTXInterval(), 0);
+  else
+    setUInt8(Offset::manualTXInterval(), std::min(255ULL, sec.seconds()));
 }
 
 bool
@@ -2022,7 +2129,11 @@ DMR6X2UVCodeplug::APRSSettingsElement::autoTXInterval() const {
 }
 void
 DMR6X2UVCodeplug::APRSSettingsElement::setAutoTXInterval(Interval sec) {
-  setUInt8(Offset::autoTXInterval(), sec.seconds()/30);
+  // Infinite or null means off (0)
+  if (! sec.isFinite())
+    setUInt8(Offset::autoTXInterval(), 0);
+  else
+    setUInt8(Offset::autoTXInterval(), std::min(255ULL, sec.seconds()/30));
 }
 void
 DMR6X2UVCodeplug::APRSSettingsElement::disableAutoTX() {
@@ -2244,7 +2355,9 @@ DMR6X2UVCodeplug::APRSSettingsElement::setDMRPreWaveDelay(Interval ms) {
 bool
 DMR6X2UVCodeplug::APRSSettingsElement::fromFMAPRSSystem(const FMAPRSSystem *sys, Context &ctx, const ErrorStack &err) {
   Q_UNUSED(ctx)
-  clear();
+  // Do not clear the element here: When updating a codeplug, the element holds the settings read
+  // from the device and settings not represented by the config must be kept. The element gets
+  // cleared by the caller, if the codeplug is generated from scratch.
 
   if (! sys->hasRevertChannel()) {
     errMsg(err) << "Cannot encode APRS settings: "
@@ -2254,7 +2367,8 @@ DMR6X2UVCodeplug::APRSSettingsElement::fromFMAPRSSystem(const FMAPRSSystem *sys,
   setFMFrequency(sys->revertChannel()->txFrequency());
   setTXTone(sys->revertChannel()->txTone());
   setPower(sys->revertChannel()->power());
-  setManualTXInterval(sys->period());
+  // The manual TX interval is not represented in the config. It is set by the caller only, if
+  // the codeplug is generated from scratch.
   setAutoTXInterval(sys->period());
   setDestination(sys->destination(), sys->destSSID());
   setSource(sys->source(), sys->srcSSID());
@@ -2690,11 +2804,17 @@ DMR6X2UVCodeplug::encodeGPSSystems(const Flags &flags, Context &ctx, const Error
   Q_UNUSED(flags); Q_UNUSED(err)
   // replaces D868UVCodeplug::encodeGPSSystems
 
-  APRSSettingsElement aprs(data(Offset::aprsSettings())); aprs.clear();
+  APRSSettingsElement aprs(data(Offset::aprsSettings()));
+  // If the codeplug is generated from scratch, start with the default settings. Otherwise keep
+  // the settings read from the device that are not represented by the config.
+  if (! flags.updateCodeplug())
+    aprs.clear();
 
   // Encode APRS system (there can only be one)
   if (0 < ctx.count<FMAPRSSystem>()) {
     aprs.fromFMAPRSSystem(ctx.get<FMAPRSSystem>(0), ctx, err);
+    if (! flags.updateCodeplug())
+      aprs.setManualTXInterval(ctx.get<FMAPRSSystem>(0)->period());
     uint8_t *aprsmsg = (uint8_t *)data(Offset::fmAPRSMessage());
     encode_ascii(aprsmsg, ctx.get<FMAPRSSystem>(0)->message(), Limit::fmAPRSMessage(), 0x00);
   }
@@ -2706,7 +2826,8 @@ DMR6X2UVCodeplug::encodeGPSSystems(const Flags &flags, Context &ctx, const Error
     // If there is at least one GPS system defined -> set auto TX interval.
     //  This setting might be overridden by any analog APRS system below
     aprs.setAutoTXInterval(ctx.get<DMRAPRSSystem>(0)->period());
-    aprs.setManualTXInterval(ctx.get<DMRAPRSSystem>(0)->period());
+    if (! flags.updateCodeplug())
+      aprs.setManualTXInterval(ctx.get<DMRAPRSSystem>(0)->period());
   }
 
   return true;

@@ -26,6 +26,9 @@ private slots:
   void testMicGain();
 
   void testHiddenZone(); ///< Regression test for #939
+
+  void testChannelRoundTrip();  ///< Roaming, through mode, data ACK and scan lists survive encode/decode.
+  void testSettingsOff();       ///< RX backlight and APRS period "off".
 };
 
 #endif // DMR6X2UVTEST_HH

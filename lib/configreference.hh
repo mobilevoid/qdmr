@@ -221,6 +221,18 @@ public:
 };
 
 
+/** Represents a list of references to scan lists.
+ * @ingroup config */
+class ScanListRefList: public ConfigObjectRefList
+{
+  Q_OBJECT
+
+public:
+  /** Empty constructor. */
+  explicit ScanListRefList(QObject *parent=nullptr);
+};
+
+
 /** Implements a reference to a positioning system.
  * @ingroup conf */
 class PositioningSystemReference: public ConfigObjectReference {

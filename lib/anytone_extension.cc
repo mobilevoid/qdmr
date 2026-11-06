@@ -63,9 +63,12 @@ AnytoneAPRSFrequencyList::allocateChild(const YAML::Node &node, ConfigItem::Cont
  * ********************************************************************************************* */
 AnytoneChannelExtension::AnytoneChannelExtension(QObject *parent)
   : ConfigExtension(parent), _frequencyCorrection(0), _handsFree(false),
-    _fmAPRSFrequency(new AnytoneAPRSFrequencyRef(this)), _aprsPTT(APRSPTT::Off)
+    _fmAPRSFrequency(new AnytoneAPRSFrequencyRef(this)), _aprsPTT(APRSPTT::Off),
+    _sendTalkerAlias(false), _autoScan(false), _fmAPRSMute(false),
+    _additionalScanLists(new ScanListRefList(this))
 {
-  // pass...
+  connect(_additionalScanLists, &ScanListRefList::elementAdded, this, [this](int) { emit modified(this); });
+  connect(_additionalScanLists, &ScanListRefList::elementRemoved, this, [this](int) { emit modified(this); });
 }
 
 int
@@ -109,6 +112,47 @@ AnytoneChannelExtension::setAPRSPTT(APRSPTT mode) {
   emit modified(this);
 }
 
+bool
+AnytoneChannelExtension::sendTalkerAlias() const {
+  return _sendTalkerAlias;
+}
+void
+AnytoneChannelExtension::enableSendTalkerAlias(bool enable) {
+  if (enable == _sendTalkerAlias)
+    return;
+  _sendTalkerAlias = enable;
+  emit modified(this);
+}
+
+bool
+AnytoneChannelExtension::autoScan() const {
+  return _autoScan;
+}
+void
+AnytoneChannelExtension::enableAutoScan(bool enable) {
+  if (enable == _autoScan)
+    return;
+  _autoScan = enable;
+  emit modified(this);
+}
+
+ScanListRefList *
+AnytoneChannelExtension::additionalScanLists() const {
+  return _additionalScanLists;
+}
+
+bool
+AnytoneChannelExtension::fmAPRSMute() const {
+  return _fmAPRSMute;
+}
+void
+AnytoneChannelExtension::enableFMAPRSMute(bool enable) {
+  if (enable == _fmAPRSMute)
+    return;
+  _fmAPRSMute = enable;
+  emit modified(this);
+}
+
 
 /* ********************************************************************************************* *
  * Implementation of AnytoneAnalogChannelExtension
@@ -116,7 +160,9 @@ AnytoneChannelExtension::setAPRSPTT(APRSPTT mode) {
 AnytoneFMChannelExtension::AnytoneFMChannelExtension(QObject *parent)
   : AnytoneChannelExtension(parent), _rxCustomCTCSS(false),
     _txCustomCTCSS(false), _customCTCSS(0), _squelchMode(SquelchMode::Carrier),
-    _scramblerFrequency()
+    _scramblerFrequency(), _ctcssPhaseReversal(false), _pttID(PTTId::Off),
+    _optionalSignaling(OptionalSignaling::Off), _dtmfID(0), _twoToneID(0), _fiveToneID(0),
+    _twoToneDecode(0), _fiveToneBOT(0), _fiveToneEOT(0)
 {
   // pass...
 }
@@ -189,12 +235,121 @@ AnytoneFMChannelExtension::setScramblerFrequency(const Frequency &f) {
   emit modified(this);
 }
 
+bool
+AnytoneFMChannelExtension::ctcssPhaseReversal() const {
+  return _ctcssPhaseReversal;
+}
+void
+AnytoneFMChannelExtension::enableCTCSSPhaseReversal(bool enable) {
+  if (enable == _ctcssPhaseReversal)
+    return;
+  _ctcssPhaseReversal = enable;
+  emit modified(this);
+}
+
+AnytoneFMChannelExtension::PTTId
+AnytoneFMChannelExtension::pttID() const {
+  return _pttID;
+}
+void
+AnytoneFMChannelExtension::setPTTID(PTTId mode) {
+  if (mode == _pttID)
+    return;
+  _pttID = mode;
+  emit modified(this);
+}
+
+AnytoneFMChannelExtension::OptionalSignaling
+AnytoneFMChannelExtension::optionalSignaling() const {
+  return _optionalSignaling;
+}
+void
+AnytoneFMChannelExtension::setOptionalSignaling(OptionalSignaling sig) {
+  if (sig == _optionalSignaling)
+    return;
+  _optionalSignaling = sig;
+  emit modified(this);
+}
+
+unsigned int
+AnytoneFMChannelExtension::dtmfID() const {
+  return _dtmfID;
+}
+void
+AnytoneFMChannelExtension::setDTMFID(unsigned int idx) {
+  if (idx == _dtmfID)
+    return;
+  _dtmfID = idx;
+  emit modified(this);
+}
+
+unsigned int
+AnytoneFMChannelExtension::twoToneID() const {
+  return _twoToneID;
+}
+void
+AnytoneFMChannelExtension::setTwoToneID(unsigned int idx) {
+  if (idx == _twoToneID)
+    return;
+  _twoToneID = idx;
+  emit modified(this);
+}
+
+unsigned int
+AnytoneFMChannelExtension::fiveToneID() const {
+  return _fiveToneID;
+}
+void
+AnytoneFMChannelExtension::setFiveToneID(unsigned int idx) {
+  if (idx == _fiveToneID)
+    return;
+  _fiveToneID = idx;
+  emit modified(this);
+}
+
+unsigned int
+AnytoneFMChannelExtension::twoToneDecode() const {
+  return _twoToneDecode;
+}
+void
+AnytoneFMChannelExtension::setTwoToneDecode(unsigned int idx) {
+  if (idx == _twoToneDecode)
+    return;
+  _twoToneDecode = idx;
+  emit modified(this);
+}
+
+unsigned int
+AnytoneFMChannelExtension::fiveToneBOT() const {
+  return _fiveToneBOT;
+}
+void
+AnytoneFMChannelExtension::setFiveToneBOT(unsigned int idx) {
+  if (idx == _fiveToneBOT)
+    return;
+  _fiveToneBOT = idx;
+  emit modified(this);
+}
+
+unsigned int
+AnytoneFMChannelExtension::fiveToneEOT() const {
+  return _fiveToneEOT;
+}
+void
+AnytoneFMChannelExtension::setFiveToneEOT(unsigned int idx) {
+  if (idx == _fiveToneEOT)
+    return;
+  _fiveToneEOT = idx;
+  emit modified(this);
+}
+
 
 /* ********************************************************************************************* *
  * Implementation of AnytoneDigitalChannelExtension
  * ********************************************************************************************* */
 AnytoneDMRChannelExtension::AnytoneDMRChannelExtension(QObject *parent)
-  : AnytoneChannelExtension(parent),  _adaptiveTDMA(false), _throughMode(false), _crc(true)
+  : AnytoneChannelExtension(parent),  _adaptiveTDMA(false), _throughMode(false), _crc(true),
+    _ranging(false)
 {
   // pass...
 }
@@ -243,6 +398,18 @@ void AnytoneDMRChannelExtension::enableCRC(bool enable) {
   if (enable == _crc)
     return;
   _crc = enable;
+  emit modified(this);
+}
+
+bool
+AnytoneDMRChannelExtension::ranging() const {
+  return _ranging;
+}
+void
+AnytoneDMRChannelExtension::enableRanging(bool enable) {
+  if (enable == _ranging)
+    return;
+  _ranging = enable;
   emit modified(this);
 }
 

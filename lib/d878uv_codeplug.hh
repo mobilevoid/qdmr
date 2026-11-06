@@ -176,6 +176,11 @@ public:
     /** Sets the FM APRS frequency index [0,7]. */
     virtual void setFMAPRSFrequencyIndex(unsigned int idx);
 
+    /** Returns @c true if the FM APRS reception is muted on this channel. */
+    virtual bool muteFMAPRS() const;
+    /** Enables/disables muting the FM APRS reception on this channel. */
+    virtual void enableMuteFMAPRS(bool enable);
+
     /** If set, transmission of talker alias for this channel is enabled. */
     virtual bool sendTalkerAlias() const;
     /** Enable transmission of talker alias. */
@@ -1946,6 +1951,9 @@ protected:
   bool encodeGPSSystems(const Flags &flags, Context &ctx, const ErrorStack &err=ErrorStack());
   bool createGPSSystems(Context &ctx, const ErrorStack &err=ErrorStack());
   bool linkGPSSystems(Context &ctx, const ErrorStack &err=ErrorStack());
+  /** Returns @c true if any digital channel reports its position via the DMR APRS (GPS) system
+   * with the given index. */
+  virtual bool dmrAPRSSystemUsedByChannel(unsigned int idx);
 
   /** Allocates memory to store all roaming channels and zones. */
   virtual void allocateRoaming();

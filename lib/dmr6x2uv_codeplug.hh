@@ -766,6 +766,17 @@ public:
     /** Enables/disables ranging. */
     virtual void enableRanging(bool enable);
 
+    /** Returns @c true if the through mode is enabled. */
+    virtual bool throughMode() const;
+    /** Enables/disables the through mode. */
+    virtual void enableThroughMode(bool enable);
+
+    /** Returns @c true if the data ACK is enabled (the device stores the inverse, "data ACK
+     * disable"). */
+    virtual bool dataACK() const;
+    /** Enables/disables the data ACK. */
+    virtual void enableDataACK(bool enable);
+
     /** Returns the DMR APRS report channel index. */
     virtual unsigned int dmrAPRSChannelIndex() const;
     /** Sets the DMR APRS report channel index. */
@@ -791,6 +802,7 @@ public:
     /** Sets the APRS type. */
     virtual void setAPRSType(APRSType aprstype);
 
+    Channel *toChannelObj(Context &ctx) const;
     bool linkChannelObj(Channel *c, Context &ctx) const;
     bool fromChannelObj(const Channel *c, Context &ctx);
 
@@ -809,6 +821,8 @@ protected:
       static constexpr Bit ranging()                               { return {0x001b, 0}; }
       static constexpr Bit dmrEncryptionType()                     { return {0x0021, 6}; }
       static constexpr unsigned int dmrEncryptionKeyIndex()        { return 0x0022; }
+      static constexpr Bit throughMode()                           { return {0x0034, 1}; }
+      static constexpr Bit dataACK()                               { return {0x0034, 2}; }
       static constexpr unsigned int scanListIndices()              { return 0x0036; }
       static constexpr unsigned int betweenScanListIndices()       { return 0x0001; }
       static constexpr unsigned int dmrAPRSChannelIndex()          { return 0x003e; }

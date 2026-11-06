@@ -238,6 +238,16 @@ ScanListReference::ScanListReference(QObject *parent)
 
 
 /* ********************************************************************************************* *
+ * Implementation of ScanListRefList
+ * ********************************************************************************************* */
+ScanListRefList::ScanListRefList(QObject *parent)
+  : ConfigObjectRefList(ScanList::staticMetaObject, parent)
+{
+  // pass...
+}
+
+
+/* ********************************************************************************************* *
  * Implementation of PositioningSystemReference
  * ********************************************************************************************* */
 PositioningSystemReference::PositioningSystemReference(const QMetaObject &elementType, QObject *parent)

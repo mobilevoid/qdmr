@@ -83,6 +83,18 @@ class AnytoneChannelExtension: public ConfigExtension
   /** Specifies if and when the position is send via the associated APRS system, once the PTT is
    * pressed. */
   Q_PROPERTY(APRSPTT aprsPTT READ aprsPTT WRITE setAPRSPTT)
+  /** If @c true, the talker alias is sent on this channel (per-channel flag of the D878UV and
+   * newer, "Send Talker Alias" in the manufacturer CPS). */
+  Q_PROPERTY(bool sendTalkerAlias READ sendTalkerAlias WRITE enableSendTalkerAlias)
+  /** If @c true, the radio starts scanning automatically when this channel is selected
+   * ("Auto Scan" in the manufacturer CPS). */
+  Q_PROPERTY(bool autoScan READ autoScan WRITE enableAutoScan)
+  /** If @c true, the FM APRS reception is muted on this channel ("Ana Aprs Mute" in the
+   * manufacturer CPS). */
+  Q_PROPERTY(bool fmAPRSMute READ fmAPRSMute WRITE enableFMAPRSMute)
+  /** Additional scan lists of this channel. Some devices (e.g., DMR-6X2UV) assign up to 8 scan
+   * lists to a channel, the first one is the channel's scan list. */
+  Q_PROPERTY(ScanListRefList *additionalScanLists READ additionalScanLists)
 
 public:
   /** Possible APRS PTT modes. */
@@ -115,6 +127,24 @@ public:
   /** Sets the APRS PTT mode. */
   void setAPRSPTT(APRSPTT mode);
 
+  /** Returns @c true if the talker alias is sent on this channel. */
+  bool sendTalkerAlias() const;
+  /** Enables/disables sending the talker alias on this channel. */
+  void enableSendTalkerAlias(bool enable);
+
+  /** Returns @c true if auto scan is enabled for this channel. */
+  bool autoScan() const;
+  /** Enables/disables auto scan for this channel. */
+  void enableAutoScan(bool enable);
+
+  /** Returns @c true if the FM APRS reception is muted on this channel. */
+  bool fmAPRSMute() const;
+  /** Enables/disables muting of the FM APRS reception on this channel. */
+  void enableFMAPRSMute(bool enable);
+
+  /** Returns the list of additional scan lists. */
+  ScanListRefList *additionalScanLists() const;
+
 protected:
   /** The frequency correction. */
   int _frequencyCorrection;
@@ -124,6 +154,14 @@ protected:
   AnytoneAPRSFrequencyRef *_fmAPRSFrequency;
   /** Holds the APRS PTT mode. */
   APRSPTT _aprsPTT;
+  /** If @c true, the talker alias is sent on this channel. */
+  bool _sendTalkerAlias;
+  /** If @c true, auto scan is enabled for this channel. */
+  bool _autoScan;
+  /** If @c true, the FM APRS reception is muted on this channel. */
+  bool _fmAPRSMute;
+  /** The additional scan lists. */
+  ScanListRefList *_additionalScanLists;
 };
 
 
@@ -143,6 +181,25 @@ class AnytoneFMChannelExtension: public AnytoneChannelExtension
   Q_PROPERTY(SquelchMode squelchMode READ squelchMode WRITE setSquelchMode)
   /** If @c true, the analog scrabler is enabled. */
   Q_PROPERTY(Frequency scramblerFrequency READ scramblerFrequency WRITE setScramblerFrequency)
+  /** If @c true, the CTCSS phase reversal (reverse burst) is enabled ("Reverse" in the
+   * manufacturer CPS). */
+  Q_PROPERTY(bool ctcssPhaseReversal READ ctcssPhaseReversal WRITE enableCTCSSPhaseReversal)
+  /** Specifies when the PTT ID is sent. */
+  Q_PROPERTY(PTTId pttID READ pttID WRITE setPTTID)
+  /** Specifies the optional signaling used on this channel. */
+  Q_PROPERTY(OptionalSignaling optionalSignaling READ optionalSignaling WRITE setOptionalSignaling)
+  /** Index of the DTMF ID (encode list) used on this channel, 0-based. */
+  Q_PROPERTY(unsigned int dtmfID READ dtmfID WRITE setDTMFID)
+  /** Index of the 2-tone ID (encode list) used on this channel, 0-based. */
+  Q_PROPERTY(unsigned int twoToneID READ twoToneID WRITE setTwoToneID)
+  /** Index of the 5-tone ID (encode list) used on this channel, 0-based. */
+  Q_PROPERTY(unsigned int fiveToneID READ fiveToneID WRITE setFiveToneID)
+  /** Index of the 2-tone decode entry used on this channel, 0-based. */
+  Q_PROPERTY(unsigned int twoToneDecode READ twoToneDecode WRITE setTwoToneDecode)
+  /** Index of the 5-tone ID sent at the begin of a transmission (BOT), 0-based. */
+  Q_PROPERTY(unsigned int fiveToneBOT READ fiveToneBOT WRITE setFiveToneBOT)
+  /** Index of the 5-tone ID sent at the end of a transmission (EOT), 0-based. */
+  Q_PROPERTY(unsigned int fiveToneEOT READ fiveToneEOT WRITE setFiveToneEOT)
 
 public:
   /** Possible squelch mode settings. */
@@ -154,6 +211,18 @@ public:
     SubToneOrOptSig = 4
   };
   Q_ENUM(SquelchMode)
+
+  /** Possible PTT ID settings. */
+  enum class PTTId {
+    Off = 0, Start = 1, End = 2, Both = 3
+  };
+  Q_ENUM(PTTId)
+
+  /** Possible optional signaling settings. */
+  enum class OptionalSignaling {
+    Off = 0, DTMF = 1, TwoTone = 2, FiveTone = 3
+  };
+  Q_ENUM(OptionalSignaling)
 
 public:
   /** Default constructor. */
@@ -184,6 +253,46 @@ public:
   /** Sets the FM scrambler carrier frequency. */
   void setScramblerFrequency(const Frequency &freq);
 
+  /** Returns @c true if the CTCSS phase reversal is enabled. */
+  bool ctcssPhaseReversal() const;
+  /** Enables/disables the CTCSS phase reversal. */
+  void enableCTCSSPhaseReversal(bool enable);
+
+  /** Returns the PTT ID setting. */
+  PTTId pttID() const;
+  /** Sets the PTT ID setting. */
+  void setPTTID(PTTId mode);
+
+  /** Returns the optional signaling. */
+  OptionalSignaling optionalSignaling() const;
+  /** Sets the optional signaling. */
+  void setOptionalSignaling(OptionalSignaling sig);
+
+  /** Returns the DTMF ID index. */
+  unsigned int dtmfID() const;
+  /** Sets the DTMF ID index. */
+  void setDTMFID(unsigned int idx);
+  /** Returns the 2-tone ID index. */
+  unsigned int twoToneID() const;
+  /** Sets the 2-tone ID index. */
+  void setTwoToneID(unsigned int idx);
+  /** Returns the 5-tone ID index. */
+  unsigned int fiveToneID() const;
+  /** Sets the 5-tone ID index. */
+  void setFiveToneID(unsigned int idx);
+  /** Returns the 2-tone decode index. */
+  unsigned int twoToneDecode() const;
+  /** Sets the 2-tone decode index. */
+  void setTwoToneDecode(unsigned int idx);
+  /** Returns the BOT 5-tone ID index. */
+  unsigned int fiveToneBOT() const;
+  /** Sets the BOT 5-tone ID index. */
+  void setFiveToneBOT(unsigned int idx);
+  /** Returns the EOT 5-tone ID index. */
+  unsigned int fiveToneEOT() const;
+  /** Sets the EOT 5-tone ID index. */
+  void setFiveToneEOT(unsigned int idx);
+
 protected:
   /** If @c true, the custom CTCSS tone is used for RX (open squelch). */
   bool _rxCustomCTCSS;
@@ -195,6 +304,24 @@ protected:
   SquelchMode _squelchMode;
   /** Sets the FM scrambler frequency. */
   Frequency _scramblerFrequency;
+  /** If @c true, the CTCSS phase reversal is enabled. */
+  bool _ctcssPhaseReversal;
+  /** The PTT ID setting. */
+  PTTId _pttID;
+  /** The optional signaling. */
+  OptionalSignaling _optionalSignaling;
+  /** DTMF ID index. */
+  unsigned int _dtmfID;
+  /** 2-tone ID index. */
+  unsigned int _twoToneID;
+  /** 5-tone ID index. */
+  unsigned int _fiveToneID;
+  /** 2-tone decode index. */
+  unsigned int _twoToneDecode;
+  /** BOT 5-tone ID index. */
+  unsigned int _fiveToneBOT;
+  /** EOT 5-tone ID index. */
+  unsigned int _fiveToneEOT;
 };
 
 
@@ -212,6 +339,8 @@ class AnytoneDMRChannelExtension: public AnytoneChannelExtension
   Q_PROPERTY(bool throughMode READ throughMode WRITE enableThroughMode)
   /** If @c true, the DMR CRC check is enabled (default). */
   Q_PROPERTY(bool crc READ crcEnabled WRITE enableCRC);
+  /** If @c true, ranging is enabled on this channel. */
+  Q_PROPERTY(bool ranging READ ranging WRITE enableRanging)
 
 public:
   /** Default constructor. */
@@ -231,6 +360,10 @@ public:
   bool crcEnabled() const;
   /** Enables DMR CRC check. */
   void enableCRC(bool enable);
+  /** Returns @c true if ranging is enabled. */
+  bool ranging() const;
+  /** Enables/disables ranging. */
+  void enableRanging(bool enable);
 
 protected:
   /** If @c true, the adaptive TDMA mode is enabled. */
@@ -239,6 +372,8 @@ protected:
   bool _throughMode;
   /** If @c true, DMR CRC check is enabled. */
   bool _crc;
+  /** If @c true, ranging is enabled. */
+  bool _ranging;
 };
 
 

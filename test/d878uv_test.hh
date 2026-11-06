@@ -44,6 +44,13 @@ private slots:
   void testHiddenZone(); ///< Regression test for #203
   void testCustomCTCSS(); ///< Regression test fpr #1004
 
+  void testChannelRoundTrip();            ///< Channel flags survive encode/decode.
+  void testSettingsOff();                 ///< TOT, RX backlight and APRS period "off".
+  void testUpdateKeepsDeviceSettings();   ///< Updating keeps device settings that decode unchanged.
+  void testMessageIndex();                ///< Message index is a linked list.
+  void testRoamingChannelColorCode();     ///< Roaming channel color code 0 is kept.
+  void testDMRAPRSWithoutDestination();   ///< Channels reporting via a GPS system w/o destination.
+
 protected:
   Config _micGainConfig;
   QTextStream _stderr;

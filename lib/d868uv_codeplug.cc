@@ -175,6 +175,7 @@ D868UVCodeplug::ChannelElement::toChannelObj(Context &ctx) const {
 
     if (AnytoneDMRChannelExtension *ext = dch->anytoneChannelExtension()) {
       ext->enableThroughMode(throughMode());
+      ext->enableRanging(ranging());
     }
   }
 
@@ -247,6 +248,7 @@ D868UVCodeplug::ChannelElement::fromChannelObj(const Channel *c, Context &ctx) {
     // Handle extension
     if (AnytoneDMRChannelExtension *ext = dc->anytoneChannelExtension()) {
       enableThroughMode(ext->throughMode());
+      enableRanging(ext->ranging());
     }
   }
 
@@ -390,11 +392,16 @@ D868UVCodeplug::GeneralSettingsElement::setPowerSave(AnytonePowerSaveSettingsExt
 
 Level
 D868UVCodeplug::GeneralSettingsElement::voxLevel() const {
-  return Level::fromValue(getUInt8(Offset::voxLevel()), Limit::vox());
+  // 0 is "off"
+  return Level::fromValue(getUInt8(Offset::voxLevel()), Limit::vox(), 0);
 }
 void
 D868UVCodeplug::GeneralSettingsElement::setVOXLevel(Level level) {
-  setUInt8(Offset::voxLevel(), level.mapTo(Limit::vox()));
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (voxLevel() == level)
+    return;
+  setUInt8(Offset::voxLevel(), level.mapTo(Limit::vox(), 0));
 }
 
 Interval
@@ -421,6 +428,10 @@ D868UVCodeplug::GeneralSettingsElement::dmrMicGain() const {
 }
 void
 D868UVCodeplug::GeneralSettingsElement::setDMRMicGain(Level gain) {
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (dmrMicGain() == gain)
+    return;
   setUInt8(Offset::dmrMicGain(), gain.mapTo(Limit::micGain()));
 }
 
@@ -769,6 +780,10 @@ D868UVCodeplug::GeneralSettingsElement::maxSpeakerVolume() const {
 }
 void
 D868UVCodeplug::GeneralSettingsElement::setMaxSpeakerVolume(Level level) {
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (maxSpeakerVolume() == level)
+    return;
   setUInt8(Offset::maxSpeakerVolume(), level.mapTo(Limit::volume()));
 }
 
@@ -824,6 +839,10 @@ D868UVCodeplug::GeneralSettingsElement::maxHeadphoneVolume() const {
 
 void
 D868UVCodeplug::GeneralSettingsElement::setMaxHeadphoneVolume(Level max) {
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (maxHeadphoneVolume() == max)
+    return;
   setUInt8(Offset::maxHeadPhoneVolume(), max.mapTo(Limit::volume()));
 }
 
@@ -918,11 +937,23 @@ D868UVCodeplug::GeneralSettingsElement::callToneMelody(Melody &melody) const {
 }
 void
 D868UVCodeplug::GeneralSettingsElement::setCallToneMelody(const Melody &melody) {
+  // Keep the device encoding if it already decodes to the same melody.
+  {
+    Melody current;
+    callToneMelody(current);
+    if (current.toTones() == melody.toTones())
+      return;
+  }
   unsigned int n=std::min(5U, (unsigned int)melody.count());
   QVector<QPair<double, unsigned int>> tones = melody.toTones();
   for (unsigned int i=0; i<n; i++) {
     setUInt16_le(Offset::callToneTones()+2*i, tones.at(i).first);
     setUInt16_le(Offset::callToneDurations()+2*i, tones.at(i).second);
+  }
+  // Clear unused tone slots
+  for (unsigned int i=n; i<5; i++) {
+    setUInt16_le(Offset::callToneTones()+2*i, 0);
+    setUInt16_le(Offset::callToneDurations()+2*i, 0);
   }
 }
 
@@ -938,11 +969,23 @@ D868UVCodeplug::GeneralSettingsElement::idleToneMelody(Melody &melody) const {
 }
 void
 D868UVCodeplug::GeneralSettingsElement::setIdleToneMelody(const Melody &melody) {
+  // Keep the device encoding if it already decodes to the same melody.
+  {
+    Melody current;
+    idleToneMelody(current);
+    if (current.toTones() == melody.toTones())
+      return;
+  }
   unsigned int n=std::min(5U, (unsigned int)melody.count());
   QVector<QPair<double, unsigned int>> tones = melody.toTones();
   for (unsigned int i=0; i<n; i++) {
     setUInt16_le(Offset::idleToneTones()+2*i, tones.at(i).first);
     setUInt16_le(Offset::idleToneDurations()+2*i, tones.at(i).second);
+  }
+  // Clear unused tone slots
+  for (unsigned int i=n; i<5; i++) {
+    setUInt16_le(Offset::idleToneTones()+2*i, 0);
+    setUInt16_le(Offset::idleToneDurations()+2*i, 0);
   }
 }
 
@@ -958,11 +1001,23 @@ D868UVCodeplug::GeneralSettingsElement::resetToneMelody(Melody &melody) const {
 }
 void
 D868UVCodeplug::GeneralSettingsElement::setResetToneMelody(const Melody &melody) {
+  // Keep the device encoding if it already decodes to the same melody.
+  {
+    Melody current;
+    resetToneMelody(current);
+    if (current.toTones() == melody.toTones())
+      return;
+  }
   unsigned int n=std::min(5U, (unsigned int)melody.count());
   QVector<QPair<double, unsigned int>> tones = melody.toTones();
   for (unsigned int i=0; i<n; i++) {
     setUInt16_le(Offset::resetToneTones()+2*i, tones.at(i).first);
     setUInt16_le(Offset::resetToneDurations()+2*i, tones.at(i).second);
+  }
+  // Clear unused tone slots
+  for (unsigned int i=n; i<5; i++) {
+    setUInt16_le(Offset::resetToneTones()+2*i, 0);
+    setUInt16_le(Offset::resetToneDurations()+2*i, 0);
   }
 }
 
@@ -1022,6 +1077,10 @@ D868UVCodeplug::GeneralSettingsElement::keyToneLevel() const {
 }
 void
 D868UVCodeplug::GeneralSettingsElement::setKeyToneLevel(Level level) {
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (keyToneLevel() == level)
+    return;
   setUInt8(Offset::keyToneLevel(), level.mapTo(Limit::keyTone()));
 }
 void
@@ -1425,45 +1484,57 @@ D868UVCodeplug::allocateBitmaps() {
 void
 D868UVCodeplug::setBitmaps(Context& ctx)
 {
+  // Only the entries within the limits are set. The bitmaps are larger than the limits and the
+  // device uses some of the remaining bits (e.g., the channel bitmap marks the VFO channels
+  // there). These are kept as read from the device.
+
   // Mark first radio ID as valid
   RadioIDBitmapElement radioid_bitmap(data(Offset::radioIDBitmap()));
   unsigned int num_radio_ids = std::min(Limit::numRadioIDs(), ctx.count<DMRRadioID>());
-  radioid_bitmap.clear(); radioid_bitmap.enableFirst(num_radio_ids);
+  for (unsigned int i=0; i<Limit::numRadioIDs(); i++)
+    radioid_bitmap.setEncoded(i, i<num_radio_ids);
 
   // Mark valid channels (set bit)
   ChannelBitmapElement channel_bitmap(data(Offset::channelBitmap()));
   unsigned int num_channels = std::min(Limit::numChannels(), ctx.count<Channel>());
-  channel_bitmap.clear(); channel_bitmap.enableFirst(num_channels);
+  for (unsigned int i=0; i<Limit::numChannels(); i++)
+    channel_bitmap.setEncoded(i, i<num_channels);
 
   // Mark valid contacts (clear bit)
   ContactBitmapElement contact_bitmap(data(Offset::contactBitmap()));
   unsigned int num_contacts = std::min(Limit::numContacts(), ctx.count<DigitalContact>());
-  contact_bitmap.clear(); contact_bitmap.enableFirst(num_contacts);
+  for (unsigned int i=0; i<Limit::numContacts(); i++)
+    contact_bitmap.setEncoded(i, i<num_contacts);
 
   // Mark valid analog contacts (clear bytes)
   DTMFContactBytemapElement analog_contact_bitmap(data(Offset::dtmfContactBytemap()));
   unsigned int num_dtmf_contacts = std::min(Limit::numDTMFContacts(), ctx.count<DTMFContact>());
-  analog_contact_bitmap.clear(); analog_contact_bitmap.enableFirst(num_dtmf_contacts);
+  for (unsigned int i=0; i<Limit::numDTMFContacts(); i++)
+    analog_contact_bitmap.setEncoded(i, i<num_dtmf_contacts);
 
   // Mark valid zones (set bits)
   ZoneBitmapElement zone_bitmap(data(Offset::zoneBitmap()));
   unsigned int num_zones = std::min(Limit::numZones(), ctx.count<Zone>());
-  zone_bitmap.clear(); zone_bitmap.enableFirst(num_zones);
+  for (unsigned int i=0; i<Limit::numZones(); i++)
+    zone_bitmap.setEncoded(i, i<num_zones);
 
   // Mark group lists
   GroupListBitmapElement group_bitmap(data(Offset::groupListBitmap()));
   unsigned int num_group_lists = std::min(Limit::numGroupLists(), ctx.count<RXGroupList>());
-  group_bitmap.clear(); group_bitmap.enableFirst(num_group_lists);
+  for (unsigned int i=0; i<Limit::numGroupLists(); i++)
+    group_bitmap.setEncoded(i, i<num_group_lists);
 
   // Mark scan lists
   ScanListBitmapElement scan_bitmap(data(Offset::scanListBitmap()));
   unsigned int num_scan_lists = std::min(Limit::numScanLists(), ctx.count<ScanList>());
-  scan_bitmap.clear(); scan_bitmap.enableFirst(num_scan_lists);
+  for (unsigned int i=0; i<Limit::numScanLists(); i++)
+    scan_bitmap.setEncoded(i, i<num_scan_lists);
 
   // Mark SMS messages
   MessageBytemapElement sms_bytemap(data(Offset::messageBytemap()));
   unsigned int num_messages = std::min(Limit::numMessages(), ctx.count<SMSTemplate>());
-  sms_bytemap.clear(); sms_bytemap.enableFirst(num_messages);
+  for (unsigned int i=0; i<Limit::numMessages(); i++)
+    sms_bytemap.setEncoded(i, i<num_messages);
 }
 
 
@@ -1730,6 +1801,13 @@ D868UVCodeplug::encodeContacts(const Flags &flags, Context &ctx, const ErrorStac
       return false;
     ((uint32_t *)data(Offset::contactIndex()))[i] = qToLittleEndian(i);
     contacts.append(contact);
+  }
+  // Contacts are allocated in blocks, the manufacturer CPS leaves unused slots erased (0xff).
+  for (unsigned int i=ctx.count<DigitalContact>();
+       (i%Limit::contactsPerBlock()) && (i<Limit::numContacts()); i++) {
+    uint32_t bank_addr = Offset::contactBanks() + (i/Limit::contactsPerBank())*Offset::betweenContactBanks();
+    uint32_t addr = bank_addr + (i%Limit::contactsPerBank())*ContactElement::size();
+    memset(data(addr), 0xff, ContactElement::size());
   }
   // encode index map for contacts
   std::sort(contacts.begin(), contacts.end(),
@@ -2258,13 +2336,28 @@ D868UVCodeplug::encodeSMSMessages(const Flags &flags, Context &ctx, const ErrorS
   for (unsigned int i=0; i<num_sms_messages; i++) {
     unsigned int bank = i/Limit::numMessagePerBank(), msg_idx = i % Limit::numMessagePerBank();
     unsigned int addr = Offset::messageBanks() + bank*Offset::betweenMessageBanks() + msg_idx*MessageElement::size();
+    // The manufacturer CPS fills the first 0xd0 bytes of a message slot with 0x00 and leaves the
+    // remaining bytes erased (0xff).
+    memset(data(addr), 0x00, 0xd0);
+    memset(data(addr)+0xd0, 0xff, MessageElement::size()-0xd0);
     MessageElement message(data(addr));
     message.setMessage(ctx.get<SMSTemplate>(i)->message());
+    // The message index is a linked list: each entry holds its own index and the index of the
+    // next message, the last entry has no next (0xff).
     MessageListElement listElement(data(Offset::messageIndex() + i*Size::messageIndex()));
+    listElement.clear();
     listElement.setIndex(i);
     if (i > 0) {
       MessageListElement prevElement(data(Offset::messageIndex() + (i-1)*Size::messageIndex()));
-      prevElement.setIndex(i);
+      prevElement.setNext(i);
+    }
+  }
+  // Unused message slots in the last bank are left erased (0xff) by the manufacturer CPS.
+  if (num_sms_messages % Limit::numMessagePerBank()) {
+    unsigned int bank = num_sms_messages/Limit::numMessagePerBank();
+    for (unsigned int i=num_sms_messages%Limit::numMessagePerBank(); i<Limit::numMessagePerBank(); i++) {
+      unsigned int addr = Offset::messageBanks() + bank*Offset::betweenMessageBanks() + i*MessageElement::size();
+      memset(data(addr), 0xff, MessageElement::size());
     }
   }
   return true;

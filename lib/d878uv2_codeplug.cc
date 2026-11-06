@@ -66,6 +66,13 @@ D878UV2Codeplug::encodeContacts(const Flags &flags, Context &ctx, const ErrorSta
     ((uint32_t *)data(Offset::contactIndex()))[i] = qToLittleEndian(i);
     contacts.append(contact);
   }
+  // Contacts are allocated in blocks, the manufacturer CPS leaves unused slots erased (0xff).
+  for (unsigned int i=ctx.count<DigitalContact>();
+       (i%Limit::contactsPerBlock()) && (i<Limit::numContacts()); i++) {
+    uint32_t bank_addr = Offset::contactBanks() + (i/Limit::contactsPerBank())*Offset::betweenContactBanks();
+    uint32_t addr = bank_addr + (i%Limit::contactsPerBank())*ContactElement::size();
+    memset(data(addr), 0xff, ContactElement::size());
+  }
   // encode index map for contacts
   std::sort(contacts.begin(), contacts.end(),
             [](DMRContact *a, DMRContact *b) {

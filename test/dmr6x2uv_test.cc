@@ -2,6 +2,10 @@
 #include "config.hh"
 #include "dmr6x2uv_codeplug.hh"
 #include "errorstack.hh"
+#include "anytone_extension.hh"
+#include "anytone_settingsextension.hh"
+#include "gpssystem.hh"
+#include "scanlist.hh"
 #include <QTest>
 
 DMR6X2UVTest::DMR6X2UVTest(QObject *parent)
@@ -279,6 +283,71 @@ DMR6X2UVTest::testHiddenZone() {
 }
 
 
+
+
+void
+DMR6X2UVTest::testChannelRoundTrip() {
+  ErrorStack err;
+  Config config;
+  if (! config.readYAML(":/data/anytone_channel_roundtrip.yaml", err))
+    QFAIL(QString("Cannot open codeplug file: %1").arg(err.format()).toStdString().c_str());
+
+  DMR6X2UVCodeplug codeplug;
+  Codeplug::Flags flags; flags.setUpdateCodeplug(false);
+  if (! codeplug.encode(&config, flags, err))
+    QFAIL(QString("Cannot encode codeplug: %1").arg(err.format()).toStdString().c_str());
+
+  // Scan list slots: channel 1 has scan list 2 (index 1) as additional list, unused slots are 0xff
+  QCOMPARE(codeplug.data(0x00800000)[0x37], (unsigned char)0x01);
+  for (unsigned int i=0x38; i<0x3e; i++)
+    QCOMPARE(codeplug.data(0x00800000)[i], (unsigned char)0xff);
+  for (unsigned int i=0x37; i<0x3e; i++)
+    QCOMPARE(codeplug.data(0x00800040)[i], (unsigned char)0xff);
+
+  Config decoded;
+  if (! codeplug.decode(&decoded, err))
+    QFAIL(QString("Cannot decode codeplug: %1").arg(err.format()).toStdString().c_str());
+
+  DMRChannel *ch1 = decoded.channelList()->channel(0)->as<DMRChannel>();
+  QVERIFY(ch1);
+  QVERIFY(nullptr != ch1->roaming());
+  QCOMPARE(ch1->anytoneChannelExtension()->ranging(), true);
+  QCOMPARE(ch1->anytoneChannelExtension()->throughMode(), false);
+  QCOMPARE(ch1->anytoneChannelExtension()->additionalScanLists()->count(), 1);
+  QCOMPARE(ch1->anytoneChannelExtension()->additionalScanLists()->get(0)->as<ScanList>()->name(),
+           QString("Scan 2"));
+
+  DMRChannel *ch2 = decoded.channelList()->channel(1)->as<DMRChannel>();
+  QVERIFY(ch2);
+  QVERIFY(nullptr == ch2->roaming());
+  QCOMPARE(ch2->anytoneChannelExtension()->throughMode(), true);
+  QCOMPARE(ch2->extended()->dataConfirm(), false);
+  QCOMPARE(ch2->anytoneChannelExtension()->additionalScanLists()->count(), 0);
+}
+
+
+void
+DMR6X2UVTest::testSettingsOff() {
+  ErrorStack err;
+  Config config;
+  if (! config.readYAML(":/data/fm_aprs_test.yaml", err))
+    QFAIL(QString("Cannot open codeplug file: %1").arg(err.format()).toStdString().c_str());
+  if (nullptr == config.settings()->anytoneExtension())
+    config.settings()->setAnytoneExtension(new AnytoneSettingsExtension());
+  config.settings()->anytoneExtension()->displaySettings()->setBacklightDurationRX(Interval::infinity());
+  config.posSystems()->get(0)->as<FMAPRSSystem>()->disablePeriod();
+
+  DMR6X2UVCodeplug codeplug;
+  Codeplug::Flags flags; flags.setUpdateCodeplug(false);
+  if (! codeplug.encode(&config, flags, err))
+    QFAIL(QString("Cannot encode codeplug: %1").arg(err.format()).toStdString().c_str());
+
+  Config decoded;
+  if (! codeplug.decode(&decoded, err))
+    QFAIL(QString("Cannot decode codeplug: %1").arg(err.format()).toStdString().c_str());
+  QVERIFY(decoded.settings()->anytoneExtension()->displaySettings()->backlightDurationRX().isInfinite());
+  QVERIFY(! decoded.posSystems()->get(0)->as<FMAPRSSystem>()->period().isFinite());
+}
 
 
 QTEST_GUILESS_MAIN(DMR6X2UVTest)

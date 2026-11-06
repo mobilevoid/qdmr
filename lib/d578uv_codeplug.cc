@@ -128,6 +128,16 @@ D578UVCodeplug::ChannelElement::enableAutoScan(bool enable) {
 }
 
 bool
+D578UVCodeplug::ChannelElement::muteFMAPRS() const {
+  return false;
+}
+void
+D578UVCodeplug::ChannelElement::enableMuteFMAPRS(bool enable) {
+  Q_UNUSED(enable);
+  // This flag does not exist on the D578UV, the byte holds the custom scrambler frequency.
+}
+
+bool
 D578UVCodeplug::ChannelElement::sendTalkerAlias() const {
   return getBit(Offset::talkerAlias());
 }
@@ -610,6 +620,10 @@ D578UVCodeplug::GeneralSettingsElement::dmrMicGain() const {
 
 void
 D578UVCodeplug::GeneralSettingsElement::setDMRMicGain(Level gain) {
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (dmrMicGain() == gain)
+    return;
   setUInt8(Offset::dmrMicGain(), gain.mapTo(Limit::micGain()));
 }
 
@@ -917,6 +931,10 @@ D578UVCodeplug::GeneralSettingsElement::maxSpeakerVolume() const {
 }
 void
 D578UVCodeplug::GeneralSettingsElement::setMaxSpeakerVolume(Level level) {
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (maxSpeakerVolume() == level)
+    return;
   setUInt8(Offset::maxSpeakerVolume(), level.mapTo(Limit::volume()));
 }
 
@@ -1171,11 +1189,23 @@ D578UVCodeplug::GeneralSettingsElement::callToneMelody(Melody &melody) const {
 }
 void
 D578UVCodeplug::GeneralSettingsElement::setCallToneMelody(const Melody &melody) {
+  // Keep the device encoding if it already decodes to the same melody.
+  {
+    Melody current;
+    callToneMelody(current);
+    if (current.toTones() == melody.toTones())
+      return;
+  }
   unsigned int n=std::min(5U, (unsigned int)melody.count());
   QVector<QPair<double, unsigned int>> tones = melody.toTones();
   for (unsigned int i=0; i<n; i++) {
     setUInt16_le(Offset::callToneTones()+2*i, tones.at(i).first);
     setUInt16_le(Offset::callToneDurations()+2*i, tones.at(i).second);
+  }
+  // Clear unused tone slots
+  for (unsigned int i=n; i<5; i++) {
+    setUInt16_le(Offset::callToneTones()+2*i, 0);
+    setUInt16_le(Offset::callToneDurations()+2*i, 0);
   }
 }
 
@@ -1191,11 +1221,23 @@ D578UVCodeplug::GeneralSettingsElement::idleToneMelody(Melody &melody) const {
 }
 void
 D578UVCodeplug::GeneralSettingsElement::setIdleToneMelody(const Melody &melody) {
+  // Keep the device encoding if it already decodes to the same melody.
+  {
+    Melody current;
+    idleToneMelody(current);
+    if (current.toTones() == melody.toTones())
+      return;
+  }
   unsigned int n=std::min(5U, (unsigned int)melody.count());
   QVector<QPair<double, unsigned int>> tones = melody.toTones();
   for (unsigned int i=0; i<n; i++) {
     setUInt16_le(Offset::idleToneTones()+2*i, tones.at(i).first);
     setUInt16_le(Offset::idleToneDurations()+2*i, tones.at(i).second);
+  }
+  // Clear unused tone slots
+  for (unsigned int i=n; i<5; i++) {
+    setUInt16_le(Offset::idleToneTones()+2*i, 0);
+    setUInt16_le(Offset::idleToneDurations()+2*i, 0);
   }
 }
 
@@ -1211,11 +1253,23 @@ D578UVCodeplug::GeneralSettingsElement::resetToneMelody(Melody &melody) const {
 }
 void
 D578UVCodeplug::GeneralSettingsElement::setResetToneMelody(const Melody &melody) {
+  // Keep the device encoding if it already decodes to the same melody.
+  {
+    Melody current;
+    resetToneMelody(current);
+    if (current.toTones() == melody.toTones())
+      return;
+  }
   unsigned int n=std::min(5U, (unsigned int)melody.count());
   QVector<QPair<double, unsigned int>> tones = melody.toTones();
   for (unsigned int i=0; i<n; i++) {
     setUInt16_le(Offset::resetToneTones()+2*i, tones.at(i).first);
     setUInt16_le(Offset::resetToneDurations()+2*i, tones.at(i).second);
+  }
+  // Clear unused tone slots
+  for (unsigned int i=n; i<5; i++) {
+    setUInt16_le(Offset::resetToneTones()+2*i, 0);
+    setUInt16_le(Offset::resetToneDurations()+2*i, 0);
   }
 }
 
@@ -2567,6 +2621,10 @@ D578UVCodeplug::ExtendedSettingsElement::fmMicGain() const {
 
 void
 D578UVCodeplug::ExtendedSettingsElement::setFMMicGain(Level gain) {
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (fmMicGain() == gain)
+    return;
   setUInt8(Offset::analogMicGain(), gain.mapTo(Limit::micGain())-1);
 }
 
@@ -2941,11 +2999,23 @@ D578UVCodeplug::ExtendedSettingsElement::callEndToneMelody(Melody &melody) const
 
 void
 D578UVCodeplug::ExtendedSettingsElement::setCallEndToneMelody(const Melody &melody) {
+  // Keep the device encoding if it already decodes to the same melody.
+  {
+    Melody current;
+    callEndToneMelody(current);
+    if (current.toTones() == melody.toTones())
+      return;
+  }
   unsigned int n=std::min(5U, (unsigned int)melody.count());
   QVector<QPair<double, unsigned int>> tones = melody.toTones();
   for (unsigned int i=0; i<n; i++) {
     setUInt16_le(Offset::callEndTones()+2*i, tones.at(i).first);
     setUInt16_le(Offset::callEndDurations()+2*i, tones.at(i).second);
+  }
+  // Clear unused tone slots
+  for (unsigned int i=n; i<5; i++) {
+    setUInt16_le(Offset::callEndTones()+2*i, 0);
+    setUInt16_le(Offset::callEndDurations()+2*i, 0);
   }
 }
 
@@ -2962,11 +3032,23 @@ D578UVCodeplug::ExtendedSettingsElement::allCallToneMelody(Melody &melody) const
 
 void
 D578UVCodeplug::ExtendedSettingsElement::setAllCallToneMelody(const Melody &melody) {
+  // Keep the device encoding if it already decodes to the same melody.
+  {
+    Melody current;
+    allCallToneMelody(current);
+    if (current.toTones() == melody.toTones())
+      return;
+  }
   unsigned int n=std::min(5U, (unsigned int)melody.count());
   QVector<QPair<double, unsigned int>> tones = melody.toTones();
   for (unsigned int i=0; i<n; i++) {
     setUInt16_le(Offset::allCallTones()+2*i, tones.at(i).first);
     setUInt16_le(Offset::allCallDurations()+2*i, tones.at(i).second);
+  }
+  // Clear unused tone slots
+  for (unsigned int i=n; i<5; i++) {
+    setUInt16_le(Offset::allCallTones()+2*i, 0);
+    setUInt16_le(Offset::allCallDurations()+2*i, 0);
   }
 }
 

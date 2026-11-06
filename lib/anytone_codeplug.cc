@@ -149,7 +149,9 @@ void
 AnytoneCodeplug::ChannelElement::setTXFrequency(unsigned hz) {
   unsigned rx = rxFrequency();
   if (rx == hz) {
-    setTXOffset(0); setRepeaterMode(RepeaterMode::Simplex);
+    // For simplex channels, the manufacturer CPS stores the TX frequency itself in the offset
+    // field. The radio ignores it, but storing it the same way keeps the codeplug identical.
+    setTXOffset(hz); setRepeaterMode(RepeaterMode::Simplex);
   } else if (rx < hz) {
     setTXOffset(hz-rx); setRepeaterMode(RepeaterMode::Positive);
   } else {
@@ -622,6 +624,12 @@ AnytoneCodeplug::ChannelElement::toChannelObj(Context &ctx) const {
     ext->enableTXCustomCTCSS(txCTCSSIsCustom());
     ext->setCustomCTCSS(customCTCSSFrequency());
     ext->setSquelchMode(squelchMode());
+    ext->enableCTCSSPhaseReversal(rxTxSwapped());
+    ext->setOptionalSignaling((AnytoneFMChannelExtension::OptionalSignaling)optionalSignaling());
+    ext->setDTMFID(dtmfIDIndex());
+    ext->setTwoToneID(twoToneIDIndex());
+    ext->setFiveToneID(fiveToneIDIndex());
+    ext->setTwoToneDecode(twoToneDecodeIndex());
 
     // done
     ch = ach;
@@ -755,6 +763,8 @@ AnytoneCodeplug::ChannelElement::fromChannelObj(const Channel *c, Context &ctx) 
       setSquelchMode(AnytoneFMChannelExtension::SquelchMode::Carrier);
     // set bandwidth
     setBandwidth(ac->bandwidth());
+    // FM channels have no RX group list, the manufacturer CPS encodes this as 0xff (none).
+    clearGroupListIndex();
     // Apply common settings
     enableTalkaround(ac->extended()->talkaround());
     // Apply FM settings
@@ -767,6 +777,12 @@ AnytoneCodeplug::ChannelElement::fromChannelObj(const Channel *c, Context &ctx) 
       if (ext->txCustomCTCSS())
         enableTXCustomCTCSS();
       setSquelchMode(ext->squelchMode());
+      enableSwapRxTx(ext->ctcssPhaseReversal());
+      setOptionalSignaling((OptSignaling)ext->optionalSignaling());
+      setDTMFIDIndex(ext->dtmfID());
+      setTwoToneIDIndex(ext->twoToneID());
+      setFiveToneIDIndex(ext->fiveToneID());
+      setTwoToneDecodeIndex(ext->twoToneDecode());
     }
   } else if (c->is<DMRChannel>()) {
     const DMRChannel *dc = c->as<const DMRChannel>();
@@ -1691,19 +1707,29 @@ AnytoneCodeplug::GeneralSettingsElement::enableBootPassword(bool enable) {
 
 Level
 AnytoneCodeplug::GeneralSettingsElement::squelchLevelA() const {
-  return Level::fromValue(getUInt8(Offset::squelchLevelA()), {1,5});
+  // 0 is "off"
+  return Level::fromValue(getUInt8(Offset::squelchLevelA()), {1,5}, 0);
 }
 void
 AnytoneCodeplug::GeneralSettingsElement::setSquelchLevelA(Level level) {
-  setUInt8(Offset::squelchLevelA(), level.mapTo({1,5}));
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (squelchLevelA() == level)
+    return;
+  setUInt8(Offset::squelchLevelA(), level.mapTo({1,5}, 0));
 }
 Level
 AnytoneCodeplug::GeneralSettingsElement::squelchLevelB() const {
-  return Level::fromValue(getUInt8(Offset::squelchLevelB()), {1,5});
+  // 0 is "off"
+  return Level::fromValue(getUInt8(Offset::squelchLevelB()), {1,5}, 0);
 }
 void
 AnytoneCodeplug::GeneralSettingsElement::setSquelchLevelB(Level level) {
-  setUInt8(Offset::squelchLevelB(), level.mapTo({1, 5}));
+  // Keep the device encoding if it already decodes to this level. The level scale has
+  // fewer or more steps than the device, so re-encoding may change an unchanged setting.
+  if (squelchLevelB() == level)
+    return;
+  setUInt8(Offset::squelchLevelB(), level.mapTo({1, 5}, 0));
 }
 
 bool
@@ -1905,10 +1931,7 @@ AnytoneCodeplug::GeneralSettingsElement::updateConfig(Context &ctx, const ErrorS
                            : AnytoneSettingsExtension::VFOMode::Memory);
   ext->setModeB(vfoModeB() ? AnytoneSettingsExtension::VFOMode::VFO
                            : AnytoneSettingsExtension::VFOMode::Memory);
-  if ((! vfoModeA()) && ctx.has<Zone>(memoryZoneA()))
-    ext->zoneA()->set(ctx.get<Zone>(memoryZoneA()));
-  if ((! vfoModeB()) && ctx.has<Zone>(memoryZoneB()))
-    ext->zoneB()->set(ctx.get<Zone>(memoryZoneB()));
+  // Memory zones A & B are linked in linkSettings(), once the zones are created.
   ext->setSelectedVFO(activeChannelB() ? AnytoneSettingsExtension::VFO::B
                                        : AnytoneSettingsExtension::VFO::A);
   ext->enableSubChannel(subChannel());
@@ -1967,6 +1990,14 @@ AnytoneCodeplug::GeneralSettingsElement::updateConfig(Context &ctx, const ErrorS
 
 bool
 AnytoneCodeplug::GeneralSettingsElement::linkSettings(RadioSettings *settings, Context &ctx, const ErrorStack &err) {
+  // Link memory zones A & B (zones do not exist yet, when the settings get decoded)
+  if (AnytoneSettingsExtension *ext = settings->anytoneExtension()) {
+    if ((! vfoModeA()) && ctx.has<Zone>(memoryZoneA()))
+      ext->zoneA()->set(ctx.get<Zone>(memoryZoneA()));
+    if ((! vfoModeB()) && ctx.has<Zone>(memoryZoneB()))
+      ext->zoneB()->set(ctx.get<Zone>(memoryZoneB()));
+  }
+
   // Link boot settings
   if (this->defaultChannel()) {
     if (! ctx.has<Zone>(this->defaultZoneIndexA())) {
